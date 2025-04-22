@@ -47,16 +47,14 @@ using Grace's declarative job format.`,
 
 		// If we are making a new subdirectory, ensure it doesn't already exist
 		if targetDir != "." {
-			if _, err := os.Stat(targetDir); err == nil {
-				cobra.CheckErr(fmt.Errorf("directory %q already exists", targetDir))
-			}
-
+			mustNotExist(targetDir)
 			err := os.MkdirAll(targetDir, 0755)
 			cobra.CheckErr(err)
 		}
 
 		fmt.Printf("↪ scaffolding new workspace %q ...\n", jobName)
 
+		// Ensure .grace/ directory does not exist
 		mustNotExist(filepath.Join(targetDir, ".grace"))
 		mkdir(targetDir, ".grace")
 		mkdir(targetDir, ".grace", "deck")
@@ -99,7 +97,7 @@ func mkdir(targetDir string, parts ...string) {
 	cobra.CheckErr(err)
 }
 
-// Helper to throw error if a dir already exists
+// Helper to check if a dir already exists
 func mustNotExist(path string) {
 	if _, err := os.Stat(path); err == nil {
 		cobra.CheckErr(fmt.Errorf("refusing to overwrite existing file or directory: %s", path))
