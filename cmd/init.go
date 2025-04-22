@@ -1,17 +1,13 @@
 package cmd
 
 import (
-	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
-	"text/template"
 
+	"github.com/graceinfra/grace/utils"
 	"github.com/spf13/cobra"
 )
-
-//go:embed templates/*
-var tplFS embed.FS
 
 func init() {
 	rootCmd.AddCommand(initCmd)
@@ -39,15 +35,15 @@ using Grace's declarative job format.`,
 			targetDir = args[0]
 			jobName = args[0]
 		} else {
-			targetDir = "."        // scatter in cwd
-			cwd, err := os.Getwd() // use base name for templating
+			targetDir = "." // scatter init files in cwd
+			cwd, err := os.Getwd()
 			cobra.CheckErr(err)
-			jobName = filepath.Base(cwd)
+			jobName = filepath.Base(cwd) // use cwd name as job name
 		}
 
 		// If we are making a new subdirectory, ensure it doesn't already exist
 		if targetDir != "." {
-			mustNotExist(targetDir)
+			utils.MustNotExist(targetDir)
 			err := os.MkdirAll(targetDir, 0755)
 			cobra.CheckErr(err)
 		}
@@ -55,51 +51,24 @@ using Grace's declarative job format.`,
 		fmt.Printf("↪ scaffolding new workspace %q ...\n", jobName)
 
 		// Ensure .grace/ directory does not exist
-		mustNotExist(filepath.Join(targetDir, ".grace"))
-		mkdir(targetDir, ".grace")
-		mkdir(targetDir, ".grace", "deck")
-		mkdir(targetDir, ".grace", "logs")
+		utils.MustNotExist(filepath.Join(targetDir, ".grace"))
+		utils.MkDir(targetDir, ".grace")
+		utils.MkDir(targetDir, ".grace", "deck")
+		utils.MkDir(targetDir, ".grace", "logs")
 
 		// Copy each template to destination with template data
 		data := map[string]string{"JobName": jobName}
 
 		files := map[string]string{
-			"templates/grace.yml.tpl": "grace.yml",
+			"files/grace.yml.tpl": "grace.yml",
 		}
 
 		for tplPath, outName := range files {
 			outPath := filepath.Join(targetDir, outName)
-			mustNotExist(outPath)
-			writeTpl(tplPath, outPath, data)
+			utils.MustNotExist(outPath)
+			utils.WriteTpl(tplPath, outPath, data)
 		}
 
 		fmt.Printf("✓ workspace %q initialized!\n", jobName)
 	},
-}
-
-// writeTpl loads tplName from tplFS, executes it with data, and writes to outPath
-func writeTpl(tplName, outPath string, data any) {
-	t, err := template.ParseFS(tplFS, tplName)
-	cobra.CheckErr(err)
-
-	f, err := os.Create(outPath)
-	cobra.CheckErr(err)
-	defer f.Close()
-
-	err = t.Execute(f, data)
-	cobra.CheckErr(err)
-}
-
-// Helper to create directory structure
-func mkdir(targetDir string, parts ...string) {
-	path := filepath.Join(append([]string{targetDir}, parts...)...)
-	err := os.MkdirAll(path, 0755)
-	cobra.CheckErr(err)
-}
-
-// Helper to check if a dir already exists
-func mustNotExist(path string) {
-	if _, err := os.Stat(path); err == nil {
-		cobra.CheckErr(fmt.Errorf("refusing to overwrite existing file or directory: %s", path))
-	}
 }

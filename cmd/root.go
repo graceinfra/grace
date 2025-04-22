@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+
 var outDir string
 
 var rootCmd = &cobra.Command{

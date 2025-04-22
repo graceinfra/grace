@@ -1,7 +1,7 @@
 jobs:
   - name: {{ .JobName }}
     step: execute
-    jcl: job-template.jcl
+    jcl: {{ .JobName }}.jcl
     params:
       - name: EXAMPLE
         value: hello
