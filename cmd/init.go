@@ -24,21 +24,27 @@ var initCmd = &cobra.Command{
 This command is used to scaffold mainframe infrastructure-as-code pipelines
 using Grace's declarative job format.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		var (
-			targetDir string
-			jobName   string
-		)
+		var hlq, profile, workspaceName string
+		var canceled bool
 
-		// Determine where to write files
-		// targetDir is where files go, jobName is for templating
-		if len(args) == 1 {
-			targetDir = args[0]
-			jobName = args[0]
+		if len(args) > 0 {
+			hlq, profile, workspaceName, canceled = RunInitTUI(args[0])
 		} else {
-			targetDir = "." // scatter init files in cwd
-			cwd, err := os.Getwd()
-			cobra.CheckErr(err)
-			jobName = filepath.Base(cwd) // use cwd name as job name
+			hlq, profile, workspaceName, canceled = RunInitTUI("")
+		}
+
+		if canceled {
+			fmt.Println("✖ Grace init canceled.")
+			return
+		}
+
+		targetDir := workspaceName
+		jobName := workspaceName
+
+		// If current directory (default) selected, set jobName to cwd
+		if jobName == "." {
+			cwd, _ := os.Getwd()
+			jobName = filepath.Base(cwd)
 		}
 
 		// If we are making a new subdirectory, ensure it doesn't already exist
@@ -57,7 +63,11 @@ using Grace's declarative job format.`,
 		utils.MkDir(targetDir, ".grace", "logs")
 
 		// Copy each template to destination with template data
-		data := map[string]string{"JobName": jobName}
+		data := map[string]string{
+			"HLQ":     hlq,
+			"Profile": profile,
+			"JobName": jobName,
+		}
 
 		files := map[string]string{
 			"files/grace.yml.tpl": "grace.yml",
