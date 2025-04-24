@@ -9,11 +9,17 @@ type GraceConfig struct {
 		Prefix string `yaml:"prefix"`
 	} `yaml:"datasets"`
 
-	Jobs []struct {
-		Name string `yaml:"name"`
-		Step string `yaml:"step"`
-		JCL  string `yaml:"jcl"`
-	} `yaml:"jobs"`
+	Jobs []Job `yaml:"jobs"`
+}
+
+type Job struct {
+	Name     string `yaml:"name"`
+	Step     string `yaml:"step"`
+	Source   string `yaml:"source"`
+	Template string `yaml:"template,omitempty"`
+	Wait     bool   `yaml:"wait,omitempty"`
+	View     string `yaml:"view"`
+	Retries  int    `yaml:"retries"`
 }
 
 type ZoweConfig struct {
