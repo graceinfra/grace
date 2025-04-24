@@ -7,8 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-
-var outDir string
+var Verbose bool
 
 var rootCmd = &cobra.Command{
 	Use:   "grace",
@@ -16,6 +15,10 @@ var rootCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Grace CLI: mainframe automation, reborn.")
 	},
+}
+
+func init() {
+	rootCmd.PersistentFlags().BoolVarP(&Verbose, "verbose", "v", false, "Enable verbose logs to stderr")
 }
 
 func Execute() {

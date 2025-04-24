@@ -9,6 +9,30 @@ import (
 	"time"
 )
 
+var (
+	Verbose    = false
+	JsonMode   = false
+	SpoolMode  = false
+	UseSpinner = false
+)
+
+// Info logs to stderr
+func Info(msg string, args ...any) {
+	fmt.Fprintf(os.Stderr, msg+"\n", args...)
+}
+
+// VerboseLog logs if --verbose
+func VerboseLog(enabled bool, msg string, args ...any) {
+	if enabled {
+		fmt.Fprintf(os.Stderr, msg+"\n", args...)
+	}
+}
+
+// Quiet returns true if we should suppress all UI (for use in commands)
+func Quiet() bool {
+	return JsonMode || SpoolMode
+}
+
 // SaveZoweLog stores a parsed Zowe result to
 // .grace/logs/20250423T213245_submit/JOB02848_HELLO.json
 // (example log dir and file name)
