@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/graceinfra/grace/utils"
@@ -11,8 +12,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var deckJobs []string
+
 func init() {
 	rootCmd.AddCommand(deckCmd)
+
+	submitCmd.Flags().StringSliceVar(&deckJobs, "only", nil, "Deck only the specified job(s)")
 }
 
 var deckCmd = &cobra.Command{
@@ -41,6 +46,11 @@ Use deck to define and compile multi-step mainframe workflows in YAML - includin
 		for _, job := range graceCfg.Jobs {
 			jobName := job.Name
 			step := job.Step
+
+			// If --only flag is set, deck the current job only if it is included in the args
+			if len(deckJobs) > 0 && !slices.Contains(deckJobs, jobName) {
+				continue
+			}
 
 			// Construct path to COBOL file
 			sourcePath := filepath.Join(".grace", "src", job.Source)
