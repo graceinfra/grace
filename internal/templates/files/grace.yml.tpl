@@ -7,4 +7,4 @@ datasets:
 jobs:
   - name: {{ .JobName }}
     step: execute
-    jcl: {{ .JobName }}.jcl
+    source: {{ .JobName }}.cbl
