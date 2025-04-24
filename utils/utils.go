@@ -13,16 +13,25 @@ import (
 )
 
 // WriteTpl loads tplName from tplFS, executes it with data, and writes to outPath
-func WriteTpl(tplName, outPath string, data any) {
+func WriteTpl(tplName, outPath string, data any) error {
 	t, err := template.ParseFS(templates.TplFS, tplName)
-	cobra.CheckErr(err)
+	if err != nil {
+		return err
+	}
 
 	f, err := os.Create(outPath)
-	cobra.CheckErr(err)
+	if err != nil {
+		return err
+	}
+
 	defer f.Close()
 
 	err = t.Execute(f, data)
-	cobra.CheckErr(err)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Helper to create directory structure
