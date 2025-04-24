@@ -18,17 +18,6 @@ type initModel struct {
 func initialInitModel(workspaceArg string) initModel {
 	cwd, _ := os.Getwd()
 	defaultWorkspace := filepath.Base(cwd)
-	hlq := textinput.New()
-	hlq.Placeholder = "IBMUSER"
-	hlq.Focus()
-	hlq.CharLimit = 8
-	hlq.Width = 20
-
-	// TODO: selection menu for zowe profiles
-	profile := textinput.New()
-	profile.Placeholder = "zosmf"
-	profile.CharLimit = 32
-	profile.Width = 20
 
 	workspace := textinput.New()
 	if workspaceArg != "" {
@@ -38,9 +27,21 @@ func initialInitModel(workspaceArg string) initModel {
 	}
 	workspace.CharLimit = 64
 	workspace.Width = 20
+	workspace.Focus()
+
+	hlq := textinput.New()
+	hlq.Placeholder = "IBMUSER"
+	hlq.CharLimit = 8
+	hlq.Width = 20
+
+	// TODO: selection menu for zowe profiles
+	profile := textinput.New()
+	profile.Placeholder = "zosmf"
+	profile.CharLimit = 32
+	profile.Width = 20
 
 	return initModel{
-		inputs: []textinput.Model{hlq, profile, workspace},
+		inputs: []textinput.Model{workspace, hlq, profile},
 	}
 }
 
@@ -91,7 +92,7 @@ func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m initModel) View() string {
 	s := "\n"
-	labels := []string{"HLQ (High-Level Qualifier)", "Profile", "Workspace Name"}
+	labels := []string{"Workspace Name", "HLQ (High-Level Qualifier)", "Profile"}
 
 	for i, input := range m.inputs {
 		s += labels[i] + ": " + input.View() + "\n"
