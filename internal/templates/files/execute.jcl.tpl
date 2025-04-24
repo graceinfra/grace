@@ -4,6 +4,6 @@
 {{ .CobolSource }}
 /*
 //GO      EXEC PGM=COBOL
-//STEPLIB DD DSN={{ .DatasetPrefix }}.LOAD,DISP=SHR
+//STEPLIB DD DSN={{ .LoadLib }},DISP=SHR
 //SYSPRINT DD SYSOUT=*
 //SYSOUT   DD SYSOUT=*

@@ -3,6 +3,7 @@ config:
 
 datasets:
   prefix: {{ .HLQ }}.GRC
+  loadlib: {{ .HLQ }}.LOAD
 
 jobs:
   - name: {{ .JobName }}

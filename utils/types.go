@@ -6,7 +6,8 @@ type GraceConfig struct {
 	} `yaml:"config"`
 
 	Datasets struct {
-		Prefix string `yaml:"prefix"`
+		Prefix  string `yaml:"prefix"`
+		LoadLib string `yaml:"loadlib"`
 	} `yaml:"datasets"`
 
 	Jobs []Job `yaml:"jobs"`

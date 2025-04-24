@@ -79,6 +79,7 @@ Use deck to define and compile multi-step mainframe workflows in YAML - includin
 				"JobName":       strings.ToUpper(jobName),
 				"CobolSource":   string(src),
 				"DatasetPrefix": graceCfg.Datasets.Prefix,
+				"LoadLib":       graceCfg.Datasets.LoadLib,
 			}
 
 			outPath := filepath.Join(".grace", "deck", jobName+".jcl")
