@@ -56,8 +56,12 @@ using Grace's declarative job format.`,
 
 		fmt.Printf("↪ scaffolding new workspace %q ...\n", jobName)
 
-		// Ensure .grace/ directory does not exist
+		// Ensure .grace or src directory does not exist
 		utils.MustNotExist(filepath.Join(targetDir, ".grace"))
+		utils.MustNotExist(filepath.Join(targetDir, "src"))
+
+		// Create directory structure
+		utils.MkDir(targetDir, "src")
 		utils.MkDir(targetDir, ".grace")
 		utils.MkDir(targetDir, ".grace", "deck")
 		utils.MkDir(targetDir, ".grace", "logs")
