@@ -17,7 +17,7 @@ var deckJobs []string
 func init() {
 	rootCmd.AddCommand(deckCmd)
 
-	submitCmd.Flags().StringSliceVar(&deckJobs, "only", nil, "Deck only the specified job(s)")
+	deckCmd.Flags().StringSliceVar(&deckJobs, "only", nil, "Deck only specified job(s)")
 }
 
 var deckCmd = &cobra.Command{
@@ -53,7 +53,7 @@ Use deck to define and compile multi-step mainframe workflows in YAML - includin
 			}
 
 			// Construct path to COBOL file
-			sourcePath := filepath.Join(".grace", "src", job.Source)
+			sourcePath := filepath.Join("src", job.Source)
 
 			// Read COBOL file
 			src, err := os.ReadFile(sourcePath)
