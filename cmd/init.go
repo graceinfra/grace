@@ -20,6 +20,7 @@ var initCmd = &cobra.Command{
 	Long: `Bootstrap a new Grace workspace with:
     - A starter grace.yml
     - ".grace/" output directory
+    - "src/" directory for source code
 
 This command is used to scaffold mainframe infrastructure-as-code pipelines
 using Grace's declarative job format.`,
