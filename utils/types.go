@@ -6,7 +6,9 @@ type GraceConfig struct {
 	} `yaml:"config"`
 
 	Datasets struct {
-		Prefix  string `yaml:"prefix"`
+		PDS     string `yaml:"pds"`
+		JCL     string `yaml:"jcl"`
+		SRC     string `yaml:"src"`
 		LoadLib string `yaml:"loadlib"`
 	} `yaml:"datasets"`
 
@@ -21,6 +23,12 @@ type Job struct {
 	Wait     bool   `yaml:"wait,omitempty"`
 	View     string `yaml:"view"`
 	Retries  int    `yaml:"retries"`
+}
+
+type JobResult interface {
+	GetJobName() string
+	GetJobID() string
+	GetStatus() string
 }
 
 type ZoweConfig struct {
@@ -45,6 +53,10 @@ type ZoweRfj struct {
 	Data     ZoweRfjData   `json:"data,omitempty"`
 	Error    *ZoweRfjError `json:"error,omitempty"`
 }
+
+func (r ZoweRfj) GetJobName() string { return r.Data.JobName }
+func (r ZoweRfj) GetJobID() string   { return r.Data.JobID }
+func (r ZoweRfj) GetStatus() string  { return r.Data.Status }
 
 type ZoweRfjData struct {
 	JobID     string  `json:"jobid"`
@@ -101,20 +113,31 @@ type GraceJobLog struct {
 	Result any `json:"result"`
 }
 
-type SubmitSummary struct {
-	Timestamp   string            `json:"timestamp"`
-	GraceCmd    string            `json:"grace_cmd"`
-	ZoweProfile string            `json:"zowe_profile"`
-	HLQ         string            `json:"hlq"`
-	Initiator   Initiator         `json:"initiator"`
-	Jobs        []JobSummaryEntry `json:"jobs"`
+type ExecutionSummary struct {
+	Timestamp   string         `json:"timestamp"`
+	GraceCmd    string         `json:"grace_cmd"`
+	ZoweProfile string         `json:"zowe_profile"`
+	HLQ         string         `json:"hlq"`
+	Initiator   Initiator      `json:"initiator"`
+	Jobs        []JobExecution `json:"jobs"`
 }
 
-type JobSummaryEntry struct {
+type JobExecution struct {
+	Job    JobInJobExecution `json:"job"`
+	Submit ZoweJobData       `json:"submit"`
+	Result ZoweJobData       `json:"result"`
+}
+
+type JobInJobExecution struct {
 	Name       string `json:"name"`
 	ID         string `json:"id"`
-	Status     string `json:"status"`
 	Step       string `json:"step"`
 	RetryIndex int    `json:"retry_index"`
 	Spooled    bool   `json:"spooled"`
+}
+
+type ZoweJobData struct {
+	Status  string  `json:"status"`
+	Retcode *string `json:"retcode"` // can be null
+	Time    string  `json:"time"`
 }
