@@ -41,7 +41,7 @@ func shouldSkip(job Job, only []string) bool {
 
 func uploadJCL(job Job, cfg GraceConfig, verbose, quiet bool) {
 	jclPath := filepath.Join(".grace", "deck", job.Name+".jcl")
-	qualifier := cfg.Datasets.Prefix + "." + strings.ToUpper(job.Name+".jcl")
+	qualifier := cfg.Datasets.PDS + "." + strings.ToUpper(job.Name+".jcl")
 
 	VerboseLog(verbose, "Uploading job %s to %s", job.Name, qualifier)
 	_, err := RunZowe(verbose, quiet, "zos-files", "upload", "file-to-data-set", jclPath, qualifier)
@@ -50,7 +50,7 @@ func uploadJCL(job Job, cfg GraceConfig, verbose, quiet bool) {
 }
 
 func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON, quiet, verbose, useSpinner bool) JobExecution {
-	qualifier := cfg.Datasets.Prefix + "." + strings.ToUpper(job.Name+".jcl")
+	qualifier := cfg.Datasets.PDS + "." + strings.ToUpper(job.Name+".jcl")
 
 	zArgs := []string{"zos-jobs", "submit", "data-set", qualifier}
 	if wantSpool {
@@ -222,7 +222,7 @@ func NewLogContext(job Job, jobId, jobName, graceCmd string, cfg GraceConfig) Lo
 		RetryIndex:  0,
 		GraceCmd:    graceCmd,
 		ZoweProfile: cfg.Config.Profile,
-		HLQ:         cfg.Datasets.Prefix,
+		HLQ:         cfg.Datasets.PDS,
 		Timestamp:   time.Now().Format(time.RFC3339),
 		Initiator: Initiator{
 			Type:   "user",

@@ -42,8 +42,8 @@ func MustNotExist(path string) {
 	}
 }
 
-// Helper to validate data set name (max qualifiers, max qualifier length, invalid chars in qualifier)
-func IsValidDataSetName(name string) error {
+// Helper to validate data set (max qualifiers, max qualifier length, invalid chars in qualifier)
+func ValidateDataSetQualifiers(name string) error {
 	parts := strings.Split(name, ".")
 	if len(parts) > 22 {
 		return fmt.Errorf("dataset name has too many qualifiers (max 22): %d", len(parts))

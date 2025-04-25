@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/graceinfra/grace/utils"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -102,11 +105,18 @@ Use deck to define and compile multi-step mainframe workflows in YAML - includin
 
 			cfgJcl := graceCfg.Datasets.JCL
 			if cfgJcl == "" {
-				if graceCfg.Datasets.PDS != "" {
-					cfgJcl = graceCfg.Datasets.PDS + ".JCL"
-				} else {
-					cobra.CheckErr(fmt.Errorf("Error resolving JCL path. Are your pds (and optionally jcl) fields set in grace.yml?"))
-				}
+				cobra.CheckErr(fmt.Errorf("Error resolving JCL data set. Is the jcl field set in grace.yml?"))
+			}
+
+			jclPath := filepath.Join(".grace", "deck", jclFileName)
+			_, err = os.Stat(jclPath)
+			if err != nil {
+				cobra.CheckErr(fmt.Errorf("Error resolving " + jclFileName + ". Does it exist at " + jclPath + "?"))
+			}
+
+			err = utils.ValidateDataSetQualifiers(cfgJcl)
+			if err != nil {
+				cobra.CheckErr(err)
 			}
 
 			err = utils.EnsurePDSExists(cfgJcl, wantVerbose)
@@ -114,11 +124,43 @@ Use deck to define and compile multi-step mainframe workflows in YAML - includin
 				cobra.CheckErr(err)
 			}
 
-			sdsPath := fmt.Sprintf("%s(%s)", cfgJcl, strings.ToUpper(jobName))
-			err = utils.EnsureSDSExists(sdsPath, wantVerbose)
+			jclMember := fmt.Sprintf("\"%s(%s)\"", cfgJcl, strings.ToUpper(jobName))
+
+			var uploadRes struct {
+				Data struct {
+					Success     bool `json:"success"`
+					APIResponse []struct {
+						Success bool   `json:"success"`
+						From    string `json:"from"`
+						To      string `json:"to"`
+					} `json:"apiResponse"`
+					Error struct {
+						Msg string `json:"msg,omitempty"`
+					} `json:"error,omitempty"`
+				} `json:"data"`
+			}
+
+			utils.VerboseLog(!wantVerbose, fmt.Sprintf("Uploading deck %s ...", strings.ToUpper(job.Name)))
+			s := spinner.New(spinner.CharSets[43], 100*time.Millisecond)
+			s.Start()
+
+			out, err := utils.RunZowe(false, true, "zos-files", "upload", "file-to-data-set", jclPath, jclMember, "--rfj")
 			if err != nil {
 				cobra.CheckErr(err)
 			}
+
+			s.Stop()
+
+			err = json.Unmarshal(out, &uploadRes)
+			if err != nil {
+				cobra.CheckErr(fmt.Errorf("Unexpected API response structure"))
+			}
+
+			if !uploadRes.Data.Success {
+				cobra.CheckErr(fmt.Errorf("JCL upload to data set failed: %s\n", uploadRes.Data.Error.Msg))
+			}
+
+			utils.VerboseLog(true, fmt.Sprintf("\n✓ JCL data set submitted for job %s\nFrom: %s\nTo: %s\n", jobName, uploadRes.Data.APIResponse[0].From, uploadRes.Data.APIResponse[0].To))
 		}
 	},
 }
