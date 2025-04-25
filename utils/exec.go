@@ -41,16 +41,21 @@ func shouldSkip(job Job, only []string) bool {
 
 func uploadJCL(job Job, cfg GraceConfig, verbose, quiet bool) {
 	jclPath := filepath.Join(".grace", "deck", job.Name+".jcl")
-	qualifier := cfg.Datasets.PDS + "." + strings.ToUpper(job.Name+".jcl")
+	_, err := os.Stat(jclPath)
+	if err != nil {
+		cobra.CheckErr(fmt.Errorf("unable to resolve %s. Did you run [grace deck]?", jclPath))
+	}
+
+	qualifier := fmt.Sprintf("%s(%s)", cfg.Datasets.JCL, strings.ToUpper(job.Name))
 
 	VerboseLog(verbose, "Uploading job %s to %s", job.Name, qualifier)
-	_, err := RunZowe(verbose, quiet, "zos-files", "upload", "file-to-data-set", jclPath, qualifier)
+	_, err = RunZowe(verbose, quiet, "zos-files", "upload", "file-to-data-set", jclPath, qualifier)
 	cobra.CheckErr(err)
 	VerboseLog(verbose, "✓ Upload complete")
 }
 
 func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON, quiet, verbose, useSpinner bool) JobExecution {
-	qualifier := cfg.Datasets.PDS + "." + strings.ToUpper(job.Name+".jcl")
+	qualifier := fmt.Sprintf("%s(%s)", cfg.Datasets.JCL, strings.ToUpper(job.Name))
 
 	zArgs := []string{"zos-jobs", "submit", "data-set", qualifier}
 	if wantSpool {
@@ -60,12 +65,6 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 	}
 
 	VerboseLog(!quiet, fmt.Sprintf("Submitting job %s ...", strings.ToUpper(job.Name)))
-
-	s := spinner.New(spinner.CharSets[43], 100*time.Millisecond)
-
-	if !quiet && useSpinner {
-		s.Start()
-	}
 
 	// Pass 'quiet' param as true so we don't immediately print JSON response.
 	// If --json,  ParseAndPrintJobResult will print JSON res.
@@ -97,7 +96,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 			Time:    time.Now().Format(time.RFC3339),
 		}
 
-		waited, err := waitAndPoll(jobId, false)
+		waited, err := waitAndPoll(jobId, false, useSpinner)
 		cobra.CheckErr(err)
 
 		jobExecution.Result = ZoweJobData{
@@ -133,11 +132,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 		Time:    time.Now().Format(time.RFC3339),
 	}
 
-	if !quiet && useSpinner {
-		s.Stop()
-	}
-
-	waited, err := waitAndPoll(result.Data.JobID, verbose)
+	waited, err := waitAndPoll(result.Data.JobID, verbose, useSpinner)
 	cobra.CheckErr(err)
 
 	jobExecution.Result = ZoweJobData{
@@ -151,7 +146,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 	if waited.Data.RetCode != nil {
 		ret = *waited.Data.RetCode
 	}
-	VerboseLog(!wantJSON, "✓ Job %s completed: %s", waited.Data.JobName, ret)
+	VerboseLog(!wantJSON, "✓ Job %s completed: %s\n", waited.Data.JobName, ret)
 
 	if wantJSON {
 		b, err := json.MarshalIndent(jobExecution, "", "  ")
@@ -165,8 +160,13 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 	return jobExecution
 }
 
-func waitAndPoll(jobId string, verbose bool) (*ZoweRfj, error) {
+func waitAndPoll(jobId string, verbose, useSpinner bool) (*ZoweRfj, error) {
 	args := []string{"zos-jobs", "view", "job-status-by-jobid", jobId, "--rfj"}
+
+	s := spinner.New(spinner.CharSets[43], 100*time.Millisecond)
+	if useSpinner {
+		s.Start()
+	}
 
 	for {
 		time.Sleep(2 * time.Second)
@@ -182,6 +182,9 @@ func waitAndPoll(jobId string, verbose bool) (*ZoweRfj, error) {
 		}
 
 		if status.Data.Status == "OUTPUT" || status.Data.RetCode != nil {
+			if useSpinner {
+				s.Stop()
+			}
 			return &status, nil
 		}
 
@@ -215,6 +218,9 @@ func ParseAndPrintJobResult(raw []byte, jsonMode, quiet bool) (ZoweRfj, error) {
 
 // NewLogContext builds a reusable log context
 func NewLogContext(job Job, jobId, jobName, graceCmd string, cfg GraceConfig) LogContext {
+	hlq := strings.Split(cfg.Datasets.JCL, ".")[0]
+	host, _ := os.Hostname()
+
 	return LogContext{
 		JobID:       jobId,
 		JobName:     jobName,
@@ -222,12 +228,12 @@ func NewLogContext(job Job, jobId, jobName, graceCmd string, cfg GraceConfig) Lo
 		RetryIndex:  0,
 		GraceCmd:    graceCmd,
 		ZoweProfile: cfg.Config.Profile,
-		HLQ:         cfg.Datasets.PDS,
+		HLQ:         hlq,
 		Timestamp:   time.Now().Format(time.RFC3339),
 		Initiator: Initiator{
 			Type:   "user",
 			Id:     os.Getenv("USER"),
-			Tenant: os.Getenv("HOST"),
+			Tenant: host,
 		},
 	}
 }

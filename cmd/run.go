@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/graceinfra/grace/utils"
@@ -51,15 +52,17 @@ var runCmd = &cobra.Command{
 
 		jobExecutions := utils.RunWorkflow(graceCfg, logDir, wantSpool, wantJSON, wantVerbose, quiet, useSpinner, submitOnly)
 
+		host, _ := os.Hostname()
+
 		summary := utils.ExecutionSummary{
 			Timestamp:   time.Now().Format(time.RFC3339),
 			GraceCmd:    "run",
 			ZoweProfile: graceCfg.Config.Profile,
-			HLQ:         graceCfg.Datasets.PDS,
+			HLQ:         strings.Split(graceCfg.Datasets.JCL, ".")[0],
 			Initiator: utils.Initiator{
 				Type:   "user",
 				Id:     os.Getenv("USER"),
-				Tenant: "nara",
+				Tenant: host,
 			},
 			Jobs: jobExecutions,
 		}

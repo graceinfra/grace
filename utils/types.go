@@ -6,7 +6,6 @@ type GraceConfig struct {
 	} `yaml:"config"`
 
 	Datasets struct {
-		PDS     string `yaml:"pds"`
 		JCL     string `yaml:"jcl"`
 		SRC     string `yaml:"src"`
 		LoadLib string `yaml:"loadlib"`
