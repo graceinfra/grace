@@ -1,8 +1,6 @@
 //{{ .JobName }} JOB (ACCT),'{{ .JobName }}',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
 //STEP1    EXEC IGYWCL
-//COBOL.SYSIN DD *
-{{ .CobolSource }}
-/*
+//COBOL.SYSIN DD DSN={{ .CobolDSN }},DISP=SHR
 //GO      EXEC PGM=COBOL
 //STEPLIB DD DSN={{ .LoadLib }},DISP=SHR
 //SYSPRINT DD SYSOUT=*

@@ -13,17 +13,22 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 }
 
+// TODO
+// --no-tui for headless scripting
+// --template support (e.g. initialize a "VSAM ETL" starter)
+
 var initCmd = &cobra.Command{
 	Use:   "init [workspace-name]",
 	Args:  cobra.MaximumNArgs(1),
-	Short: "Bootstrap a new Grace workspace",
-	Long: `Bootstrap a new Grace workspace with:
-    - A starter grace.yml
-    - ".grace/" output directory
-    - "src/" directory for source code
+	Short: "Scaffold a new Grace workflow",
+	Long: `Initialize a new Grace workspace by scaffolding the required structure:
+  - A starter grace.yml configuration file
+  - A .grace/ directory for logs and deck output
+  - A src/ directory for COBOL or GraceLang source files
 
-This command is used to scaffold mainframe infrastructure-as-code pipelines
-using Grace's declarative job format.`,
+This command can be used non-interactively with an optional [workspace-name], or it will launch an interactive prompt to collect your HLQ, Zowe profile, and workspace name.
+
+Use init to start building Grace workflows declaratively, with ready-to-run JCL templates and a clean IaC layout.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		var hlq, profile, workspaceName string
 		var canceled bool
@@ -76,7 +81,7 @@ using Grace's declarative job format.`,
 		}
 
 		files := map[string]string{
-			"files/grace.yml.tpl": "grace.yml",
+			"files/grace.yml.tmpl": "grace.yml",
 		}
 
 		for tplPath, outName := range files {
