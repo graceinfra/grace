@@ -31,6 +31,8 @@ Use deck to define and compile multi-step mainframe workflows in YAML - includin
 	Run: func(cmd *cobra.Command, args []string) {
 		os.MkdirAll(filepath.Join(".grace", "deck"), os.ModePerm)
 
+		wantVerbose := Verbose
+
 		// Read grace.yml
 		ymlData, err := os.ReadFile("grace.yml")
 		if err != nil {
@@ -72,24 +74,51 @@ Use deck to define and compile multi-step mainframe workflows in YAML - includin
 				default:
 					cobra.CheckErr(fmt.Errorf("Unsupported step: %s", step))
 				}
+			} else {
+				cobra.CheckErr(fmt.Errorf("No template found for step %s", step))
 			}
 
 			// Render JCL
 			data := map[string]string{
-				"JobName":       strings.ToUpper(jobName),
-				"CobolSource":   string(src),
-				"DatasetPrefix": graceCfg.Datasets.Prefix,
-				"LoadLib":       graceCfg.Datasets.LoadLib,
+				"JobName":     strings.ToUpper(jobName),
+				"CobolSource": string(src),
+				"LoadLib":     graceCfg.Datasets.LoadLib,
 			}
 
-			outPath := filepath.Join(".grace", "deck", jobName+".jcl")
+			jclFileName := fmt.Sprintf(jobName + ".jcl")
+
+			outPath := filepath.Join(".grace", "deck", jclFileName)
 
 			err = utils.WriteTpl(templatePath, outPath, data)
 			if err != nil {
-				cobra.CheckErr(fmt.Errorf("Failed to write %s: %w", jobName+".jcl", err))
+				cobra.CheckErr(fmt.Errorf("Failed to write %s: %w", jclFileName, err))
 			}
 
 			fmt.Printf("✓ JCL for job %q generated at %s\n", jobName, outPath)
+
+			// --- JCL upload to mainframe ---
+
+			utils.VerboseLog(wantVerbose, "Checking allocation on %s ...", "mainframe") // TODO: read zowe config and determine target mainframe ip/hostname
+
+			cfgJcl := graceCfg.Datasets.JCL
+			if cfgJcl == "" {
+				if graceCfg.Datasets.PDS != "" {
+					cfgJcl = graceCfg.Datasets.PDS + ".JCL"
+				} else {
+					cobra.CheckErr(fmt.Errorf("Error resolving JCL path. Are your pds (and optionally jcl) fields set in grace.yml?"))
+				}
+			}
+
+			err = utils.EnsurePDSExists(cfgJcl, wantVerbose)
+			if err != nil {
+				cobra.CheckErr(err)
+			}
+
+			sdsPath := fmt.Sprintf("%s(%s)", cfgJcl, strings.ToUpper(jobName))
+			err = utils.EnsureSDSExists(sdsPath, wantVerbose)
+			if err != nil {
+				cobra.CheckErr(err)
+			}
 		}
 	},
 }
