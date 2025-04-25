@@ -69,9 +69,10 @@ using Grace's declarative job format.`,
 
 		// Copy each template to destination with template data
 		data := map[string]string{
-			"HLQ":     hlq,
-			"Profile": profile,
-			"JobName": jobName,
+			"WorkspaceName": workspaceName,
+			"HLQ":           hlq,
+			"Profile":       profile,
+			"JobName":       jobName,
 		}
 
 		files := map[string]string{

@@ -2,7 +2,7 @@ config:
   profile: {{ .Profile }}
 
 datasets:
-  prefix: {{ .HLQ }}.GRC
+  pds: {{ .HLQ }}.{{ .WorkspaceName }}.GRC
   loadlib: {{ .HLQ }}.LOAD
 
 jobs:
