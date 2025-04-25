@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/briandowns/spinner"
+	"github.com/graceinfra/grace/types"
 	"github.com/graceinfra/grace/utils"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -44,7 +45,7 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 			cobra.CheckErr(err)
 		}
 
-		var graceCfg utils.GraceConfig
+		var graceCfg types.GraceConfig
 		err = yaml.Unmarshal(ymlData, &graceCfg)
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("Failed to read grace.yml: %w", err))

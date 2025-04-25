@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/graceinfra/grace/types"
 	"github.com/graceinfra/grace/utils"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -43,7 +44,7 @@ var runCmd = &cobra.Command{
 		ymlData, err := os.ReadFile("grace.yml")
 		cobra.CheckErr(err)
 
-		var graceCfg utils.GraceConfig
+		var graceCfg types.GraceConfig
 		err = yaml.Unmarshal(ymlData, &graceCfg)
 		cobra.CheckErr(err)
 
@@ -54,12 +55,12 @@ var runCmd = &cobra.Command{
 
 		host, _ := os.Hostname()
 
-		summary := utils.ExecutionSummary{
+		summary := types.ExecutionSummary{
 			Timestamp:   time.Now().Format(time.RFC3339),
 			GraceCmd:    "run",
 			ZoweProfile: graceCfg.Config.Profile,
 			HLQ:         strings.Split(graceCfg.Datasets.JCL, ".")[0],
-			Initiator: utils.Initiator{
+			Initiator: types.Initiator{
 				Type:   "user",
 				Id:     os.Getenv("USER"),
 				Tenant: host,

@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/graceinfra/grace/types"
 )
 
 // RunZowe invokes `zowe <args...>` under the hood, respecting JsonMode/SpoolMode/Verbose.
@@ -43,19 +45,19 @@ func RunZowe(verbose, quiet bool, args ...string) ([]byte, error) {
 	return outBuf.Bytes(), nil
 }
 
-func ListZoweProfiles() ([]ZoweProfile, error) {
+func ListZoweProfiles() ([]types.ZoweProfile, error) {
 	configPath := filepath.Join(os.Getenv("HOME"), ".zowe", "zowe.config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var zoweConfig ZoweConfig
+	var zoweConfig types.ZoweConfig
 	if err := json.Unmarshal(data, &zoweConfig); err != nil {
 		return nil, err
 	}
 
-	profiles := make([]ZoweProfile, 0, len(zoweConfig.Profiles))
+	profiles := make([]types.ZoweProfile, 0, len(zoweConfig.Profiles))
 	for _, p := range zoweConfig.Profiles {
 		profiles = append(profiles, p)
 	}
@@ -100,7 +102,7 @@ func EnsurePDSExists(name string, verbose bool) error {
 			return err
 		}
 
-		var res ZoweRfj
+		var res types.ZoweRfj
 		if err = json.Unmarshal(raw, &res); err != nil {
 			return err
 		}
@@ -141,7 +143,7 @@ func EnsureSDSExists(name string, verbose bool) error {
 			return err
 		}
 
-		var res ZoweRfj
+		var res types.ZoweRfj
 		if err = json.Unmarshal(raw, &res); err != nil {
 			return err
 		}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/graceinfra/grace/types"
 )
 
 var (
@@ -36,13 +38,13 @@ func Quiet() bool {
 // SaveZoweLog stores a parsed Zowe result to
 // .grace/logs/20250423T213245_submit/JOB02848_HELLO.json
 // (example log dir and file name)
-func SaveZoweLog(logDir string, ctx LogContext, payload any) error {
+func SaveZoweLog(logDir string, ctx types.LogContext, payload any) error {
 	// Filename: JOB02848_HELLO.json
 	fileName := fmt.Sprintf("%s_%s.json", ctx.JobID, strings.ToUpper(ctx.JobName))
 	filePath := filepath.Join(logDir, fileName)
 
 	// Wrap full log context
-	logObj := GraceJobLog{
+	logObj := types.GraceJobLog{
 		LogContext: ctx,
 		Result:     payload,
 	}

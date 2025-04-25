@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/briandowns/spinner"
+	"github.com/graceinfra/grace/types"
 	"github.com/spf13/cobra"
 )
 
-func RunWorkflow(graceCfg GraceConfig, logDir string, wantSpool, wantJSON, verbose, quiet, useSpinner bool, submitOnly []string) []JobExecution {
-	var jobExecutions []JobExecution
+func RunWorkflow(graceCfg types.GraceConfig, logDir string, wantSpool, wantJSON, verbose, quiet, useSpinner bool, submitOnly []string) []types.JobExecution {
+	var jobExecutions []types.JobExecution
 	for _, job := range graceCfg.Jobs {
 		if shouldSkip(job, submitOnly) {
 			continue
@@ -35,11 +36,11 @@ func RunWorkflow(graceCfg GraceConfig, logDir string, wantSpool, wantJSON, verbo
 	return jobExecutions
 }
 
-func shouldSkip(job Job, only []string) bool {
+func shouldSkip(job types.Job, only []string) bool {
 	return len(only) > 0 && !slices.Contains(only, job.Name)
 }
 
-func uploadJCL(job Job, cfg GraceConfig, verbose, quiet bool) {
+func uploadJCL(job types.Job, cfg types.GraceConfig, verbose, quiet bool) {
 	jclPath := filepath.Join(".grace", "deck", job.Name+".jcl")
 	_, err := os.Stat(jclPath)
 	if err != nil {
@@ -54,7 +55,7 @@ func uploadJCL(job Job, cfg GraceConfig, verbose, quiet bool) {
 	VerboseLog(verbose, "✓ Upload complete")
 }
 
-func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON, quiet, verbose, useSpinner bool) JobExecution {
+func submitAndWatch(job types.Job, cfg types.GraceConfig, logDir string, wantSpool, wantJSON, quiet, verbose, useSpinner bool) types.JobExecution {
 	qualifier := fmt.Sprintf("%s(%s)", cfg.Datasets.JCL, strings.ToUpper(job.Name))
 
 	zArgs := []string{"zos-jobs", "submit", "data-set", qualifier}
@@ -73,7 +74,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 	cobra.CheckErr(err)
 
 	if wantSpool {
-		var jobExecution JobExecution
+		var jobExecution types.JobExecution
 
 		jobId, jobName := ParseSpoolMeta(out)
 		err := os.WriteFile(filepath.Join(logDir, jobId+"_"+strings.ToUpper(jobName)+".spool.log"), out, 0644)
@@ -82,7 +83,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 		}
 		_ = SaveZoweLog(logDir, NewLogContext(job, jobId, jobName, "run", cfg), "spooled")
 
-		jobExecution.Job = JobInJobExecution{
+		jobExecution.Job = types.JobInJobExecution{
 			Name:       job.Name,
 			ID:         jobId,
 			Step:       job.Step,
@@ -90,7 +91,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 			Spooled:    true,
 		}
 
-		jobExecution.Submit = ZoweJobData{
+		jobExecution.Submit = types.ZoweJobData{
 			Status:  "",
 			Retcode: nil,
 			Time:    time.Now().Format(time.RFC3339),
@@ -99,7 +100,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 		waited, err := waitAndPoll(jobId, false, useSpinner)
 		cobra.CheckErr(err)
 
-		jobExecution.Result = ZoweJobData{
+		jobExecution.Result = types.ZoweJobData{
 			Status:  waited.Data.Status,
 			Retcode: waited.Data.RetCode,
 			Time:    time.Now().Format(time.RFC3339),
@@ -110,7 +111,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 		return jobExecution
 	}
 
-	var jobExecution JobExecution
+	var jobExecution types.JobExecution
 
 	// Set wantJSON and quiet params so this does not print.
 	// We store JSON output in result and construct final JobExecution struct
@@ -118,7 +119,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 	result, err := ParseAndPrintJobResult(out, false, true)
 	cobra.CheckErr(err)
 
-	jobExecution.Job = JobInJobExecution{
+	jobExecution.Job = types.JobInJobExecution{
 		Name:       result.Data.JobName,
 		ID:         result.Data.JobID,
 		Step:       job.Step,
@@ -126,7 +127,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 		Spooled:    false,
 	}
 
-	jobExecution.Submit = ZoweJobData{
+	jobExecution.Submit = types.ZoweJobData{
 		Status:  result.Data.Status,
 		Retcode: result.Data.RetCode,
 		Time:    time.Now().Format(time.RFC3339),
@@ -135,7 +136,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 	waited, err := waitAndPoll(result.Data.JobID, verbose, useSpinner)
 	cobra.CheckErr(err)
 
-	jobExecution.Result = ZoweJobData{
+	jobExecution.Result = types.ZoweJobData{
 		Status:  waited.Data.Status,
 		Retcode: waited.Data.RetCode,
 		Time:    time.Now().Format(time.RFC3339),
@@ -160,7 +161,7 @@ func submitAndWatch(job Job, cfg GraceConfig, logDir string, wantSpool, wantJSON
 	return jobExecution
 }
 
-func waitAndPoll(jobId string, verbose, useSpinner bool) (*ZoweRfj, error) {
+func waitAndPoll(jobId string, verbose, useSpinner bool) (*types.ZoweRfj, error) {
 	args := []string{"zos-jobs", "view", "job-status-by-jobid", jobId, "--rfj"}
 
 	s := spinner.New(spinner.CharSets[43], 100*time.Millisecond)
@@ -175,7 +176,7 @@ func waitAndPoll(jobId string, verbose, useSpinner bool) (*ZoweRfj, error) {
 			return nil, err
 		}
 
-		var status ZoweRfj
+		var status types.ZoweRfj
 		if err := json.Unmarshal(out, &status); err != nil {
 			VerboseLog(true, "⚠️ Failed to parse job status: %v", err)
 			continue
@@ -192,7 +193,7 @@ func waitAndPoll(jobId string, verbose, useSpinner bool) (*ZoweRfj, error) {
 	}
 }
 
-func PrintJobResult(result JobResult, raw []byte, jsonMode, quiet bool) {
+func PrintJobResult(result types.JobResult, raw []byte, jsonMode, quiet bool) {
 	if jsonMode {
 		_, _ = os.Stdout.Write(raw)
 		return
@@ -203,8 +204,8 @@ func PrintJobResult(result JobResult, raw []byte, jsonMode, quiet bool) {
 	fmt.Printf("\n\u2713 Job %s submitted as %s (status: %s)\n", result.GetJobName(), result.GetJobID(), result.GetStatus())
 }
 
-func ParseAndPrintJobResult(raw []byte, jsonMode, quiet bool) (ZoweRfj, error) {
-	var result ZoweRfj
+func ParseAndPrintJobResult(raw []byte, jsonMode, quiet bool) (types.ZoweRfj, error) {
+	var result types.ZoweRfj
 	err := json.Unmarshal(raw, &result)
 	if err != nil {
 		return result, fmt.Errorf("invalid Zowe JSON: %w", err)
@@ -217,11 +218,11 @@ func ParseAndPrintJobResult(raw []byte, jsonMode, quiet bool) (ZoweRfj, error) {
 }
 
 // NewLogContext builds a reusable log context
-func NewLogContext(job Job, jobId, jobName, graceCmd string, cfg GraceConfig) LogContext {
+func NewLogContext(job types.Job, jobId, jobName, graceCmd string, cfg types.GraceConfig) types.LogContext {
 	hlq := strings.Split(cfg.Datasets.JCL, ".")[0]
 	host, _ := os.Hostname()
 
-	return LogContext{
+	return types.LogContext{
 		JobID:       jobId,
 		JobName:     jobName,
 		Step:        job.Step,
@@ -230,7 +231,7 @@ func NewLogContext(job Job, jobId, jobName, graceCmd string, cfg GraceConfig) Lo
 		ZoweProfile: cfg.Config.Profile,
 		HLQ:         hlq,
 		Timestamp:   time.Now().Format(time.RFC3339),
-		Initiator: Initiator{
+		Initiator: types.Initiator{
 			Type:   "user",
 			Id:     os.Getenv("USER"),
 			Tenant: host,
