@@ -1,0 +1,16 @@
+config:
+  profile: zosmf
+
+datasets:
+  jcl: Z71041.HELLO.GRC.JCL
+  src: Z71041.HELLO.GRC.SRC
+  loadlib: Z71041.LOAD
+
+jobs:
+  - name: hello
+    step: execute
+    source: hello.cbl
+
+  - name: hello2
+    step: execute
+    source: hello.cbl
