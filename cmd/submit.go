@@ -8,7 +8,6 @@ func init() {
 	rootCmd.AddCommand(submitCmd)
 
 	submitCmd.Flags().BoolVar(&wantJSON, "json", false, "Return structured JSON data about each job")
-	submitCmd.Flags().BoolVar(&wantSpool, "spool", false, "Return full spool content for each job")
 	submitCmd.Flags().StringSliceVar(&submitOnly, "only", nil, "Submit only specified job(s)")
 }
 
@@ -19,7 +18,7 @@ var submitCmd = &cobra.Command{
 
 This includes uploading COBOL source, input files, or other required datasets to the target system via Zowe CLI, and submitting each job through zos-jobs.
 
-By default, it prints a summary of each job submission, including the job name, ID, and status. Use the --json or --spool flags to retrieve raw structured output.
+By default, it prints a summary of each job submission, including the job name, ID, and status. Use the --json flag to retrieve raw structured output.
 
 NOTE: This command is fire-and-forget. It runs asynchronously and DOES NOT wait for jobs to complete. Use [grace run] to wait for job execution and manually monitor results.`,
 	Run: func(cmd *cobra.Command, args []string) {
