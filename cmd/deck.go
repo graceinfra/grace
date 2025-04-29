@@ -16,12 +16,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var deckJobs []string
+var (
+	deckJobs  []string
+	noUpload  bool
+	noCompile bool
+)
 
 func init() {
 	rootCmd.AddCommand(deckCmd)
 
 	deckCmd.Flags().StringSliceVar(&deckJobs, "only", nil, "Only deck specified job(s)")
+	deckCmd.Flags().BoolVar(&noCompile, "no-compile", false, "Upload JCL or COBOL to remote mainframe data sets without recompiling JCL")
+	deckCmd.Flags().BoolVar(&noUpload, "no-upload", false, "Only compile JCL, but don't upload JCL or COBOL to remote mainframe data sets")
 }
 
 var deckCmd = &cobra.Command{
@@ -83,52 +89,50 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 				continue
 			}
 
-			// Construct path to COBOL file
-			srcPath := filepath.Join("src", job.Source)
-
-			_, err = os.Stat(srcPath)
-			if err != nil {
-				cobra.CheckErr(fmt.Errorf("Error resolving " + job.Source + ". Does it exist at " + srcPath + "?"))
-			}
-
-			// Read COBOL file
-			_, err := os.ReadFile(srcPath)
-			if err != nil {
-				cobra.CheckErr(fmt.Errorf("Failed to read COBOL source %s: %w", srcPath, err))
-			}
-
-			var templatePath string
-
-			if job.Template != "" {
-				templatePath = job.Template
-			} else if step != "" {
-				switch step {
-				case "execute":
-					templatePath = "files/execute.jcl.tmpl"
-				default:
-					cobra.CheckErr(fmt.Errorf("Unsupported step: %s", step))
-				}
-			} else {
-				cobra.CheckErr(fmt.Errorf("No template found for step %s", step))
-			}
-
-			// Render JCL
-			data := map[string]string{
-				"JobName":  strings.ToUpper(jobName),
-				"CobolDSN": graceCfg.Datasets.SRC + "(" + strings.ToUpper(jobName) + ")",
-				"LoadLib":  graceCfg.Datasets.LoadLib,
-			}
-
 			jclFileName := fmt.Sprintf(jobName + ".jcl")
 
-			outPath := filepath.Join(".grace", "deck", jclFileName)
+			if !noCompile {
+				// --- Render JCL ---
+				// Skip this step if --no-compile flag is set
 
-			err = templates.WriteTpl(templatePath, outPath, data)
-			if err != nil {
-				cobra.CheckErr(fmt.Errorf("Failed to write %s: %w", jclFileName, err))
+				var templatePath string
+
+				if job.Template != "" {
+					templatePath = job.Template
+				} else if step != "" {
+					switch step {
+					case "execute":
+						templatePath = "files/execute.jcl.tmpl"
+					default:
+						cobra.CheckErr(fmt.Errorf("Unsupported step: %s", step))
+					}
+				} else {
+					cobra.CheckErr(fmt.Errorf("No template found for step %s", step))
+				}
+
+				cobolDsn := graceCfg.Datasets.SRC + "(" + strings.ToUpper(jobName) + ")"
+
+				data := map[string]string{
+					"JobName":  strings.ToUpper(jobName),
+					"CobolDSN": cobolDsn,
+					"LoadLib":  graceCfg.Datasets.LoadLib,
+				}
+
+				outPath := filepath.Join(".grace", "deck", jclFileName)
+
+				err = templates.WriteTpl(templatePath, outPath, data)
+				if err != nil {
+					cobra.CheckErr(fmt.Errorf("Failed to write %s: %w", jclFileName, err))
+				}
+
+				logger.Info("✓ JCL for job %q generated at %s", jobName, outPath)
 			}
 
-			logger.Info("✓ JCL for job %q generated at %s\n", jobName, outPath)
+			// --- Skip upload step if --no-upload ---
+
+			if noUpload {
+				continue
+			}
 
 			// --- JCL and COBOL upload to target data sets ---
 
@@ -174,16 +178,23 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 			spinnerText := fmt.Sprintf("Uploading deck %s ...\n", strings.ToUpper(job.Name))
 			ctx.Logger.StartSpinner(spinnerText)
 
-			zowe.UploadJCL(ctx, job)
-			// if err != nil {
-			// 	cobra.CheckErr(fmt.Errorf("JCL upload to data set failed: %w\n", err))
-			// }
+			err = zowe.UploadJCL(ctx, job)
+			if err != nil {
+				cobra.CheckErr(err)
+			}
 			ctx.Logger.StopSpinner()
 
 			// --- Upload COBOL source to target data set ---
 
 			spinnerText = fmt.Sprintf("Uploading source %s ...\n", strings.ToUpper(job.Source))
 			ctx.Logger.StartSpinner(spinnerText)
+
+			// Construct path to COBOL file
+			srcPath := filepath.Join("src", job.Source)
+			_, err := os.Stat(srcPath)
+			if err != nil {
+				cobra.CheckErr(fmt.Errorf("unable to resolve %s", srcPath))
+			}
 
 			res, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
 			if err != nil {
