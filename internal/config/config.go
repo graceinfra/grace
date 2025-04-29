@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/graceinfra/grace/internal/utils"
 	"github.com/graceinfra/grace/types"
-	"github.com/graceinfra/grace/utils"
 	"gopkg.in/yaml.v3"
 )
 

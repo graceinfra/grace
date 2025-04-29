@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/graceinfra/grace/internal/templates"
-	"github.com/graceinfra/grace/utils"
+	"github.com/graceinfra/grace/internal/utils"
 	"github.com/spf13/cobra"
 )
 
