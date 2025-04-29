@@ -175,7 +175,7 @@ func EnsurePDSExists(ctx *context.ExecutionContext, name string) error {
 	}
 
 	if !allocRes.Success {
-		return fmt.Errorf("Partitioned data set allocation failed: %s", allocRes.Error.Msg)
+		return fmt.Errorf("partitioned data set allocation failed: %s", allocRes.Error.Msg)
 	}
 
 	ctx.Logger.Info("Successfully allocated PDS %s", name)
@@ -215,7 +215,7 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 	}
 
 	if !allocRes.Success {
-		return fmt.Errorf("Partitioned data set allocation failed: %s", allocRes.Error.Msg)
+		return fmt.Errorf("sequential data set allocation failed: %s", allocRes.Error.Msg)
 	}
 
 	ctx.Logger.Info("Successfully allocated PDS %s", name)

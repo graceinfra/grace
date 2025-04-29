@@ -2,16 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/log"
-	"github.com/graceinfra/grace/internal/templates"
-	"github.com/graceinfra/grace/internal/zowe"
+	"github.com/graceinfra/grace/internal/orchestrator"
 	"github.com/graceinfra/grace/types"
 	"github.com/spf13/cobra"
 )
@@ -41,10 +36,6 @@ Deck supports templated compilation, custom templates, and selective job targeti
 
 Use deck to prepare and stage mainframe batch jobs before invoking [grace run] or [grace submit].`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Ensure .grace/deck/ exists
-		err := os.MkdirAll(filepath.Join(".grace", "deck"), os.ModePerm)
-		cobra.CheckErr(err)
-
 		var outputStyle types.OutputStyle
 		switch {
 		case Verbose:
@@ -53,18 +44,13 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 			outputStyle = types.StyleHuman
 		}
 
-		// --- Load and validate grace.yml ---
-
+		// Load and validate grace.yml
 		graceCfg, err := config.LoadGraceConfig("grace.yml")
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to load grace configuration: %w", err))
 		}
 
-		// --- Initialize logger ---
-
 		logger := log.NewLogger(outputStyle)
-
-		// --- Initialize ExecutionContext ---
 
 		ctx := &context.ExecutionContext{
 			Config:      graceCfg,
@@ -74,145 +60,15 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 			GraceCmd:    "deck",
 		}
 
-		// --- Run decking logic ---
+		// Instantiate orchestrator
+		orch := orchestrator.NewZoweOrchestrator()
 
-		for _, job := range graceCfg.Jobs {
-			jobName := job.Name
-			step := job.Step
+		logger.Info("Starting deck and upload process...")
 
-			// If --only flag is set, deck the current job only if it is included in the args
-			if len(deckJobs) > 0 && !slices.Contains(deckJobs, jobName) {
-				continue
-			}
+		err = orch.DeckAndUpload(ctx, noCompile, noUpload)
+		cobra.CheckErr(err)
 
-			jclFileName := fmt.Sprintf(jobName + ".jcl")
-
-			if !noCompile {
-				// --- Render JCL ---
-				// Skip this step if --no-compile flag is set
-
-				var templatePath string
-
-				if job.Template != "" {
-					templatePath = job.Template
-				} else if step != "" {
-					switch step {
-					case "execute":
-						templatePath = "files/execute.jcl.tmpl"
-					default:
-						cobra.CheckErr(fmt.Errorf("Unsupported step: %s", step))
-					}
-				} else {
-					cobra.CheckErr(fmt.Errorf("No template found for step %s", step))
-				}
-
-				cobolDsn := graceCfg.Datasets.SRC + "(" + strings.ToUpper(jobName) + ")"
-
-				data := map[string]string{
-					"JobName":  strings.ToUpper(jobName),
-					"CobolDSN": cobolDsn,
-					"LoadLib":  graceCfg.Datasets.LoadLib,
-				}
-
-				outPath := filepath.Join(".grace", "deck", jclFileName)
-
-				err = templates.WriteTpl(templatePath, outPath, data)
-				if err != nil {
-					cobra.CheckErr(fmt.Errorf("Failed to write %s: %w", jclFileName, err))
-				}
-
-				logger.Info("✓ JCL for job %q generated at %s", jobName, outPath)
-			}
-
-			// --- Skip upload step if --no-upload ---
-
-			if noUpload {
-				continue
-			}
-
-			// --- JCL and COBOL upload to target data sets ---
-
-			// Resolve JCL target
-			cfgJcl := graceCfg.Datasets.JCL
-			if cfgJcl == "" {
-				cobra.CheckErr(fmt.Errorf("Error resolving target JCL data set. Is the jcl field set in grace.yml?"))
-			}
-
-			// Resolve COBOL source target
-			cfgSrc := graceCfg.Datasets.SRC
-			if cfgSrc == "" {
-				cobra.CheckErr(fmt.Errorf("Error resolving target COBOL source data set. Is the src field set in grace.yml?"))
-			}
-
-			// Construct JCL path
-			jclPath := filepath.Join(".grace", "deck", jclFileName)
-			_, err = os.Stat(jclPath)
-			if err != nil {
-				cobra.CheckErr(fmt.Errorf("Error resolving " + jclFileName + ". Does it exist at " + jclPath + "?"))
-			}
-
-			logger.Info("Allocating on %s ...", "mainframe") // TODO: read zowe config and determine target mainframe ip/hostname
-
-			// Ensure target PDS exist
-			err = zowe.EnsurePDSExists(ctx, cfgJcl)
-			cobra.CheckErr(err)
-
-			err = zowe.EnsurePDSExists(ctx, cfgSrc)
-			cobra.CheckErr(err)
-
-			srcMember := fmt.Sprintf("%s(%s)", cfgSrc, strings.ToUpper(jobName))
-
-			// --- Upload JCL to target data set ---
-
-			spinnerTextJCL := fmt.Sprintf("Uploading JCL deck %s ...", strings.ToUpper(job.Name))
-			ctx.Logger.StartSpinner(spinnerTextJCL)
-
-			jclUploadRes, err := zowe.UploadJCL(ctx, job)
-			if err != nil {
-				ctx.Logger.StopSpinner()
-				cobra.CheckErr(fmt.Errorf("JCL upload failed for job %s: %w", job.Name, err))
-			}
-			ctx.Logger.StopSpinner()
-
-			ctx.Logger.Info(fmt.Sprintf("✓ JCL deck for job %q uploaded", jobName))
-			if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
-				ctx.Logger.Verbose(fmt.Sprintf("  From: %s", jclUploadRes.Data.APIResponse[0].From))
-				ctx.Logger.Verbose(fmt.Sprintf("  To:   %s", jclUploadRes.Data.APIResponse[0].To))
-			}
-
-			// --- Upload COBOL source to target data set ---
-
-			// LoadGraceConfig ensures job.Source is present for 'execute' step.
-			if job.Source == "" {
-				// If other steps might not have source, skip upload
-				logger.Verbose("Skipping COBOL source upload for job %q (no source defined in grace.yml)", jobName)
-				continue
-			}
-
-			spinnerTextCobol := fmt.Sprintf("Uploading COBOL source %s ...", strings.ToUpper(job.Source))
-			ctx.Logger.StartSpinner(spinnerTextCobol)
-
-			// Construct path to COBOL file
-			srcPath := filepath.Join("src", job.Source)
-			_, err = os.Stat(srcPath)
-			if err != nil {
-				ctx.Logger.StopSpinner()
-				cobra.CheckErr(fmt.Errorf("unable to resolve COBOL source file %s for job %s", srcPath, jobName))
-			}
-
-			cobolUploadRes, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
-			if err != nil {
-				ctx.Logger.StopSpinner()
-				cobra.CheckErr(fmt.Errorf("COBOL source upload to %s failed for job %s: %w\n", srcMember, jobName, err))
-			}
-
-			ctx.Logger.StopSpinner()
-
-			ctx.Logger.Info(fmt.Sprintf("✓ COBOL data set %s submitted for job %q", job.Source, jobName))
-			if cobolUploadRes != nil && cobolUploadRes.Data.Success && len(cobolUploadRes.Data.APIResponse) > 0 {
-				ctx.Logger.Verbose(fmt.Sprintf("  From: %s", cobolUploadRes.Data.APIResponse[0].From))
-				ctx.Logger.Verbose(fmt.Sprintf("  To:   %s", cobolUploadRes.Data.APIResponse[0].To))
-			}
-		}
+		fmt.Println() // Newline
+		logger.Info("✓ Deck and upload process completed successfully.")
 	},
 }

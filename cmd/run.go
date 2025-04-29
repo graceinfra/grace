@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/log"
 	"github.com/graceinfra/grace/internal/models"
-	"github.com/graceinfra/grace/internal/runner"
+	"github.com/graceinfra/grace/internal/orchestrator"
 	"github.com/graceinfra/grace/types"
 	"github.com/spf13/cobra"
 )
@@ -41,10 +42,6 @@ Run creates a timestamped log directory containing job output and a summary.json
 
 Use '--only' to selectively run specific jobs, or '--json' for machine-readable structured output.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// --- Decide output style ---
-		// Are we user facing? Part of a pipeline? This will let the logger
-		// know whether to show animations, verbose text, etc.)
-
 		var outputStyle types.OutputStyle
 		switch {
 		case wantJSON:
@@ -70,11 +67,11 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 		logDir, err := log.CreateLogDir(workflowId, workflowStartTime, "run")
 		cobra.CheckErr(err)
 
-		// --- Run workflow ---
+		// --- Prepare ExecutionContext ---
 
 		logger := log.NewLogger(outputStyle)
 
-		jobExecutionRecords := runner.RunWorkflow(&context.ExecutionContext{
+		ctx := &context.ExecutionContext{
 			WorkflowId:  workflowId,
 			Config:      graceCfg,
 			Logger:      logger,
@@ -82,15 +79,28 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 			OutputStyle: outputStyle,
 			SubmitOnly:  submitOnly,
 			GraceCmd:    "run",
-		})
+		}
+
+		// --- Instantiate and run orchestrator ---
+
+		orch := orchestrator.NewZoweOrchestrator()
+		logger.Info("Starting orchestrator workflow run...")
+
+		jobExecutionRecords, err := orch.Run(ctx)
+		cobra.CheckErr(err)
 
 		// --- Construct workflow summary ---
 
 		host, _ := os.Hostname()
-		hlq := strings.Split(graceCfg.Datasets.JCL, ".")[0]
-		if hlq == "" {
-			cobra.CheckErr(fmt.Errorf("unable to resolve JCL dataset identifier. Is the 'jcl' field filled out under 'datasets' in grace.yml?"))
+		hlq := ""
+		if graceCfg.Datasets.JCL != "" {
+			parts := strings.Split(graceCfg.Datasets.JCL, ".")
+			if len(parts) > 0 {
+				hlq = parts[0]
+			}
 		}
+		// If HLQ is still empty here, summary will just show empty HLQ, which is fine.
+		// Critical check happened in the orchestrator.
 
 		jobSummaries := make([]models.JobSummary, 0, len(jobExecutionRecords))
 		jobsSucceeded := 0
@@ -133,33 +143,51 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 			jobSummaries = append(jobSummaries, summary)
 
 			// Update overall stats
-			// Define "failure" condition more robustly
 			isFailed := finalStatus == "SUBMIT_FAILED" ||
 				finalStatus == "ABEND" ||
 				finalStatus == "JCL ERROR" ||
 				finalStatus == "SEC ERROR" ||
-				(finalRetCode != nil && *finalRetCode != "CC 0000") // Adjust non-zero RC logic as needed
+				finalStatus == "SYSTEM FAILURE" ||
+				finalStatus == "CANCELED" ||
+				(finalStatus != "OUTPUT" && finalStatus != "SUBMITTED" && record.JobID != "PENDING" && record.JobID != "SUBMIT_FAILED")
+
+			// More precise RC check (optional, depends on exact success definition)
+			// isFailed := finalStatus == "SUBMIT_FAILED" ||
+			// 	(finalStatus != "OUTPUT" && record.JobID != "PENDING") || // Any non-output terminal state
+			// 	(finalStatus == "OUTPUT" && finalRetCode != nil && *finalRetCode != "CC 0000" && *finalRetCode != "CC 0004") // Example: Allow CC 0004
 
 			if isFailed {
 				jobsFailed++
 				if firstFailure == nil {
-					// Capture the pointer to the summary we just created
-					firstFailure = &jobSummaries[len(jobSummaries)-1]
-					overallStatus = "Failed" // Mark overall as failed
+					firstFailure = &jobSummaries[len(jobSummaries)-1] // Point to the summary just added
+					overallStatus = "Failed"
 				}
-			} else if finalStatus == "OUTPUT" { // Or your definition of success
+			} else if finalStatus == "OUTPUT" {
 				jobsSucceeded++
-			} else {
-				// Handle other statuses (INPUT, ACTIVE etc.) if the workflow stops unexpectedly
-				if overallStatus != "Failed" { // Don't overwrite Failed status
-					overallStatus = "Partial" // Or "Unknown", "Incomplete"
-				}
 			}
 		}
-		// If loop finished and nothing failed, but counts don't match total jobs, it might be partial
-		if overallStatus == "Success" && (jobsSucceeded+jobsFailed != len(graceCfg.Jobs)-len(submitOnly)) {
-			overallStatus = "Partial" // Or Incomplete
+
+		// Refine overall status calculation
+		totalJobsDefined := len(graceCfg.Jobs)
+		totalJobsAttempted := 0
+		for _, job := range graceCfg.Jobs {
+			if len(submitOnly) == 0 || slices.Contains(submitOnly, job.Name) {
+				totalJobsAttempted++
+			}
 		}
+
+		if overallStatus == "Success" && (jobsSucceeded+jobsFailed != totalJobsAttempted) {
+			// If we didn't fail, but the counts don't add up (e.g., unexpected status, polling error), mark as Partial
+			overallStatus = "Partial"
+		} else if jobsFailed > 0 {
+			overallStatus = "Failed"
+		} else if totalJobsAttempted == 0 && totalJobsDefined > 0 {
+			overallStatus = "Skipped"
+		} else if jobsSucceeded == totalJobsAttempted && totalJobsAttempted > 0 {
+			overallStatus = "Success"
+		}
+		// If jobsSucceeded + jobsFailed == totalJobsAttempted, and jobsFailed == 0, it's Success
+		// If jobsSucceeded + jobsFailed == totalJobsAttempted, and jobsFailed > 0, it's Failed
 
 		summary := models.ExecutionSummary{
 			WorkflowId:        workflowId,
@@ -172,7 +200,7 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 				Id:     os.Getenv("USER"),
 				Tenant: host,
 			},
-			Jobs:            jobSummaries, // Assign the mapped summaries
+			Jobs:            jobSummaries,
 			OverallStatus:   overallStatus,
 			TotalDurationMs: time.Since(workflowStartTime).Milliseconds(),
 			JobsSucceeded:   jobsSucceeded,
@@ -187,12 +215,17 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 
 		summaryPath := filepath.Join(logDir, "summary.json")
 		f, err := os.Create(summaryPath)
-		cobra.CheckErr(err)
+		if err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to create summary file %s: %w", summaryPath, err))
+		}
 		defer f.Close()
 
 		_, err = f.Write(formatted)
-		cobra.CheckErr(err)
+		if err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to write summary file %s: %w", summaryPath, err))
+		}
 
+		fmt.Println() // Newline
 		logger.Info("✓ Workflow complete, logs saved to: %s", logDir)
 	},
 }
