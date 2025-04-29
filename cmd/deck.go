@@ -7,13 +7,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/log"
 	"github.com/graceinfra/grace/internal/templates"
 	"github.com/graceinfra/grace/internal/zowe"
 	"github.com/graceinfra/grace/types"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -53,16 +53,12 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 			outputStyle = types.StyleHuman
 		}
 
-		// --- Read grace.yml and construct GraceConfig ---
+		// --- Load and validate grace.yml ---
 
-		ymlData, err := os.ReadFile("grace.yml")
+		graceCfg, err := config.LoadGraceConfig("grace.yml")
 		if err != nil {
-			cobra.CheckErr(err)
+			cobra.CheckErr(fmt.Errorf("failed to load grace configuration: %w", err))
 		}
-
-		var graceCfg types.GraceConfig
-		err = yaml.Unmarshal(ymlData, &graceCfg)
-		cobra.CheckErr(err)
 
 		// --- Initialize logger ---
 
@@ -71,7 +67,7 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 		// --- Initialize ExecutionContext ---
 
 		ctx := &context.ExecutionContext{
-			Config:      &graceCfg,
+			Config:      graceCfg,
 			Logger:      logger,
 			OutputStyle: outputStyle,
 			SubmitOnly:  submitOnly,
@@ -157,54 +153,53 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 
 			logger.Info("Allocating on %s ...", "mainframe") // TODO: read zowe config and determine target mainframe ip/hostname
 
-			// Validate data set qualifiers and ensure target data sets exist on the mainframe
-			err = zowe.ValidateDataSetQualifiers(cfgJcl)
-			cobra.CheckErr(err)
-
-			err = zowe.ValidateDataSetQualifiers(cfgSrc)
-			cobra.CheckErr(err)
-
+			// Ensure target PDS exist
 			err = zowe.EnsurePDSExists(ctx, cfgJcl)
 			cobra.CheckErr(err)
 
 			err = zowe.EnsurePDSExists(ctx, cfgSrc)
 			cobra.CheckErr(err)
 
-			// jclMember := fmt.Sprintf("%s(%s)", cfgJcl, strings.ToUpper(jobName))
 			srcMember := fmt.Sprintf("%s(%s)", cfgSrc, strings.ToUpper(jobName))
 
 			// --- Upload JCL to target data set ---
 
-			spinnerText := fmt.Sprintf("Uploading deck %s ...\n", strings.ToUpper(job.Name))
-			ctx.Logger.StartSpinner(spinnerText)
-
+			// UploadJCL has its own spinner
 			err = zowe.UploadJCL(ctx, job)
 			if err != nil {
 				cobra.CheckErr(err)
 			}
-			ctx.Logger.StopSpinner()
 
 			// --- Upload COBOL source to target data set ---
+			// LoadGraceConfig ensures job.Source is present for 'execute' step.
+			if job.Source == "" {
+				// If other steps might not have source, skip upload
+				logger.Verbose("Skipping COBOL source upload for job %q (no source defined in grace.yml)", jobName)
+				continue
+			}
 
-			spinnerText = fmt.Sprintf("Uploading source %s ...\n", strings.ToUpper(job.Source))
+			spinnerText := fmt.Sprintf("Uploading COBOL source %s ...", strings.ToUpper(job.Source))
 			ctx.Logger.StartSpinner(spinnerText)
 
 			// Construct path to COBOL file
 			srcPath := filepath.Join("src", job.Source)
 			_, err := os.Stat(srcPath)
 			if err != nil {
+				ctx.Logger.StopSpinner()
 				cobra.CheckErr(fmt.Errorf("unable to resolve %s", srcPath))
 			}
 
 			res, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
 			if err != nil {
+				ctx.Logger.StopSpinner()
 				cobra.CheckErr(fmt.Errorf("COBOL source upload to data set failed: %w\n", err))
 			}
 
 			ctx.Logger.StopSpinner()
 
-			ctx.Logger.Info(fmt.Sprintf("✓ COBOL data set submitted for job %s\n", jobName))
-			ctx.Logger.Verbose(fmt.Sprintf("From: %s\nTo: %s\n", res.Data.APIResponse[0].From, res.Data.APIResponse[0].To))
+			ctx.Logger.Info(fmt.Sprintf("✓ COBOL data set %s submitted for job %q\n", job.Source, jobName))
+			ctx.Logger.Verbose(fmt.Sprintf("  From: %s", res.Data.APIResponse[0].From))
+			ctx.Logger.Verbose(fmt.Sprintf("  To:   %s", res.Data.APIResponse[0].To))
 		}
 	},
 }

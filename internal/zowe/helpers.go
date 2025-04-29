@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -85,6 +84,31 @@ func listZoweProfiles() ([]types.ZoweProfile, error) {
 	}
 
 	return profiles, nil
+}
+
+func UploadJCL(ctx *context.ExecutionContext, job *types.Job) error {
+	jclPath := filepath.Join(".grace", "deck", job.Name+".jcl")
+	_, err := os.Stat(jclPath)
+	if err != nil {
+		return fmt.Errorf("unable to resolve %s. Did you run [grace deck]?", jclPath)
+	}
+
+	target := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, strings.ToUpper(job.Name))
+
+	spinnerText := fmt.Sprintf("Uploading JCL deck %s ...", strings.ToUpper(job.Name))
+	ctx.Logger.StartSpinner(spinnerText)
+
+	res, err := UploadFileToDataset(ctx, jclPath, target)
+	if err != nil {
+		return err
+	}
+
+	ctx.Logger.StopSpinner()
+
+	ctx.Logger.Info(fmt.Sprintf("✓ JCL data set submitted for job %s", job.Name))
+	ctx.Logger.Verbose(fmt.Sprintf("  From: %s", res.Data.APIResponse[0].From))
+	ctx.Logger.Verbose(fmt.Sprintf("  To:   %s", res.Data.APIResponse[0].To))
+	return nil
 }
 
 type uploadRes struct {
@@ -223,27 +247,6 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 
 	ctx.Logger.Info("Successfully allocated PDS %s", name)
 
-	return nil
-}
-
-// Helper to validate data set (max qualifiers, max qualifier length, invalid chars in qualifier)
-func ValidateDataSetQualifiers(name string) error {
-	parts := strings.Split(name, ".")
-	if len(parts) > 22 {
-		return fmt.Errorf("dataset name has too many qualifiers (max 22): %d", len(parts))
-	}
-
-	for _, part := range parts {
-		if len(part) == 0 {
-			return fmt.Errorf("dataset name contains an empty qualifier")
-		}
-		if len(part) > 8 {
-			return fmt.Errorf("qualifier %q exceeds 8 characters", part)
-		}
-		if matched, _ := regexp.MatchString(`^[A-Z0-9#$@]+$`, part); !matched {
-			return fmt.Errorf("qualifier %q contains invalid characters; only A-Z, 0-9, $, #, @ allowed", part)
-		}
-	}
 	return nil
 }
 

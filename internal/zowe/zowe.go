@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,25 +12,6 @@ import (
 	"github.com/graceinfra/grace/types"
 	"github.com/spf13/cobra"
 )
-
-func UploadJCL(ctx *context.ExecutionContext, job *types.Job) error {
-	jclPath := filepath.Join(".grace", "deck", job.Name+".jcl")
-	_, err := os.Stat(jclPath)
-	if err != nil {
-		return fmt.Errorf("unable to resolve %s. Did you run [grace deck]?", jclPath)
-	}
-
-	target := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, strings.ToUpper(job.Name))
-
-	res, err := UploadFileToDataset(ctx, jclPath, target)
-	if err != nil {
-		return err
-	}
-
-	ctx.Logger.Info(fmt.Sprintf("✓ JCL data set submitted for job %s\n", job.Name))
-	ctx.Logger.Verbose(fmt.Sprintf("From: %s\nTo: %s\n", res.Data.APIResponse[0].From, res.Data.APIResponse[0].To))
-	return nil
-}
 
 // SubmitJobAndWatch submits a job, waits for completion, and returns a detailed JobExecutionRecord
 func SubmitJobAndWatch(ctx *context.ExecutionContext, job *types.Job) models.JobExecutionRecord {
