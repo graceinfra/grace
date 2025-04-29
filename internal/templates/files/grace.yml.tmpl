@@ -2,8 +2,8 @@ config:
   profile: {{ .Profile }}
 
 datasets:
-  jcl: {{ .HLQ }}.{{ .WorkspaceName }}.JCL
-  src: {{ .HLQ }}.{{ .WorkspaceName }}.SRC
+  jcl: {{ .HLQ }}.{{ .WorkflowName }}.JCL
+  src: {{ .HLQ }}.{{ .WorkflowName }}.SRC
   loadlib: {{ .HLQ }}.LOAD
 
 jobs:

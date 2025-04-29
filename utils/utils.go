@@ -6,27 +6,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"text/template"
 
-	"github.com/graceinfra/grace/internal/templates"
 	"github.com/spf13/cobra"
 )
-
-// WriteTpl loads tplName from tplFS, executes it with data, and writes to outPath
-func WriteTpl(tplName, outPath string, data any) error {
-	t, err := template.ParseFS(templates.TplFS, tplName)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	return t.Execute(f, data)
-}
 
 // Helper to create directory structure
 func MkDir(targetDir string, parts ...string) {
@@ -61,45 +43,4 @@ func ValidateDataSetQualifiers(name string) error {
 		}
 	}
 	return nil
-}
-
-// Helper to parse job id and name from spool output bc no JSON
-func ParseSpoolMeta(out []byte) (jobId string, jobName string) {
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		if jobId == "" {
-			if fields := strings.Fields(line); len(fields) > 0 {
-				for _, field := range fields {
-					if strings.HasPrefix(field, "JOB") && len(field) >= 7 {
-						jobId = field
-						break
-					}
-				}
-			}
-		}
-		if jobName == "" && strings.Contains(line, "IEF453I ") {
-			parts := strings.Split(line, "IEF453I ")
-			if len(parts) > 1 {
-				right := strings.TrimSpace(parts[1])
-				tokens := strings.Split(right, " ")
-				if len(tokens) > 0 {
-					jobName = tokens[0]
-				}
-			}
-		}
-		if jobName == "" && strings.Contains(line, "NAME-") {
-			idx := strings.Index(line, "NAME-")
-			if idx != -1 {
-				after := strings.TrimSpace(line[idx+5:])
-				fields := strings.Fields(after)
-				if len(fields) > 0 {
-					jobName = fields[0]
-				}
-			}
-		}
-		if jobId != "" && jobName != "" {
-			break
-		}
-	}
-	return
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/graceinfra/grace/internal/templates"
 	"github.com/graceinfra/grace/utils"
 	"github.com/spf13/cobra"
 )
@@ -21,22 +22,22 @@ var initCmd = &cobra.Command{
 	Use:   "init [workspace-name]",
 	Args:  cobra.MaximumNArgs(1),
 	Short: "Scaffold a new Grace workflow",
-	Long: `Initialize a new Grace workspace by scaffolding the required structure:
+	Long: `Initialize a new Grace workflow by scaffolding the required structure:
   - A starter grace.yml configuration file
   - A .grace/ directory for logs and deck output
   - A src/ directory for COBOL or GraceLang source files
 
-This command can be used non-interactively with an optional [workspace-name], or it will launch an interactive prompt to collect your HLQ, Zowe profile, and workspace name.
+This command can be used with an optional [workflow-name], or it will launch an interactive prompt to populate your HLQ, Zowe profile, and workflow name in grace.yml.
 
 Use init to start building Grace workflows declaratively, with ready-to-run JCL templates and a clean IaC layout.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		var hlq, profile, workspaceName string
+		var hlq, profile, workflowName string
 		var canceled bool
 
 		if len(args) > 0 {
-			hlq, profile, workspaceName, canceled = RunInitTUI(args[0])
+			hlq, profile, workflowName, canceled = RunInitTUI(args[0])
 		} else {
-			hlq, profile, workspaceName, canceled = RunInitTUI("")
+			hlq, profile, workflowName, canceled = RunInitTUI("")
 		}
 
 		if canceled {
@@ -44,8 +45,8 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 			return
 		}
 
-		targetDir := workspaceName
-		jobName := workspaceName
+		targetDir := workflowName
+		jobName := workflowName
 
 		// If current directory (default) selected, set jobName to cwd
 		if jobName == "." {
@@ -60,7 +61,7 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 			cobra.CheckErr(err)
 		}
 
-		fmt.Printf("↪ scaffolding new workspace %q ...\n", jobName)
+		fmt.Printf("↪ Scaffolding new workflow %q ...\n", jobName)
 
 		// Ensure .grace or src directory does not exist
 		utils.MustNotExist(filepath.Join(targetDir, ".grace"))
@@ -74,10 +75,10 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 
 		// Copy each template to destination with template data
 		data := map[string]string{
-			"WorkspaceName": workspaceName,
-			"HLQ":           hlq,
-			"Profile":       profile,
-			"JobName":       jobName,
+			"WorkflowName": workflowName,
+			"HLQ":          hlq,
+			"Profile":      profile,
+			"JobName":      jobName,
 		}
 
 		files := map[string]string{
@@ -87,9 +88,9 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 		for tplPath, outName := range files {
 			outPath := filepath.Join(targetDir, outName)
 			utils.MustNotExist(outPath)
-			utils.WriteTpl(tplPath, outPath, data)
+			templates.WriteTpl(tplPath, outPath, data)
 		}
 
-		fmt.Printf("✓ workspace %q initialized!\n", jobName)
+		fmt.Printf("✓ Workflow %q initialized!\n", jobName)
 	},
 }
