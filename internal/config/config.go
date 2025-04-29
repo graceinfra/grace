@@ -48,7 +48,48 @@ func getAllowedStepKeys(m map[string]bool) []string {
 }
 
 func ValidateGraceConfig(cfg *types.GraceConfig) error {
-	var errs []string // Slice to collect error messages
+	// Basic syntax and field validation
+	syntaxErrs := validateSyntax(cfg)
+
+	// --- Build job map & prepare graph ---
+
+	jobMap := make(map[string]*types.Job, len(cfg.Jobs))
+	jobGraph := make(map[string]*JobNode, len(cfg.Jobs))
+
+	if len(syntaxErrs) != 0 {
+		return errors.New("Grace configuration validation failed:\n- " + strings.Join(syntaxErrs, "\n- "))
+	} else {
+		for _, job := range cfg.Jobs {
+			jobMap[job.Name] = job
+			jobGraph[job.Name] = &JobNode{Job: job}
+		}
+	}
+
+	// --- Validate dependencies & build graph links ---
+
+	depErrs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph)
+
+	// --- Cycle detection ---
+
+	var cycleErrs []string
+	if len(syntaxErrs) == 0 && len(depErrs) == 0 {
+		if cyclePath := detectCycle(jobGraph); cyclePath != nil {
+			cycleErrs = append(cycleErrs, fmt.Sprintf("dependency cycle detected: %s", strings.Join(cyclePath, " -> ")))
+		}
+	}
+
+	// --- Combine errors and final reporting ---
+
+	allErrs := append(append(syntaxErrs, depErrs...), cycleErrs...)
+	if len(allErrs) > 0 {
+		return errors.New("Grace configuration validation failed:\n- " + strings.Join(allErrs, "\n- "))
+	}
+
+	return nil
+}
+
+func validateSyntax(cfg *types.GraceConfig) []string {
+	var errs []string
 
 	// --- Validate top-level 'config' section ---
 	if cfg.Config.Profile == "" {
@@ -132,10 +173,89 @@ func ValidateGraceConfig(cfg *types.GraceConfig) error {
 		// }
 	}
 
-	if len(errs) > 0 {
-		// Join errors with a newline for better readability in output
-		return errors.New("Grace configuration validation failed:\n- " + strings.Join(errs, "\n- "))
+	return errs
+}
+
+func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string]*types.Job, jobGraph map[string]*JobNode) []string {
+	var errs []string
+
+	for i, job := range cfg.Jobs {
+		jobCtx := fmt.Sprintf("job[%d] (name: %q)", i, job.Name)
+		node := jobGraph[job.Name]
+
+		for _, depName := range job.DependsOn {
+			_, exists := jobMap[depName]
+
+			if !exists {
+				errs = append(errs, fmt.Sprintf("%s: dependency %q not found", jobCtx, depName))
+				continue
+			}
+
+			if depName == job.Name {
+				errs = append(errs, fmt.Sprintf("%s: job cannot depend on itself", jobCtx))
+				continue
+			}
+
+			if node != nil {
+				depNode := jobGraph[depName]
+				if depNode != nil {
+					node.Dependencies = append(node.Dependencies, depNode)
+					node.Dependents = append(node.Dependents, node)
+				}
+			}
+		}
 	}
 
-	return nil // No errors found
+	return errs
+}
+
+// detectCycle performs DFS to find cycles in the job graph.
+// Returns a slice of job names representing the cycle path if found, otherwise nil.
+func detectCycle(graph map[string]*JobNode) []string {
+	path := make([]string, 0)
+	visited := make(map[string]bool)
+	recursionStack := make(map[string]bool)
+
+	var dfs func(nodeName string) []string
+	dfs = func(nodeName string) []string {
+		node := graph[nodeName]
+		visited[nodeName] = true
+		path = append(path, nodeName)
+
+		for _, dependent := range node.Dependents { // Check who depends on this node
+			depName := dependent.Job.Name
+			if !visited[depName] {
+				if cycle := dfs(depName); cycle != nil {
+					return cycle // Cycle found deeper
+				}
+			} else if recursionStack[depName] {
+				// Found a back edge to a node already in the current recursion stack AKA we found a cycle
+				// Find the start of the cycle in the current path
+				cycleStartIndex := -1
+				for i, nameInPath := range path {
+					if nameInPath == depName {
+						cycleStartIndex = i
+						break
+					}
+				}
+
+				return append(path[cycleStartIndex:], depName)
+			}
+		}
+
+		// Backtrack
+		path = path[:len(path)-1]
+		recursionStack[nodeName] = false
+		return nil // No cycle found from this node
+	}
+
+	for nodeName := range graph {
+		if !visited[nodeName] {
+			if cycle := dfs(nodeName); cycle != nil {
+				return cycle // Return the first cycle found
+			}
+		}
+	}
+
+	return nil // No cycles found in the graph
 }

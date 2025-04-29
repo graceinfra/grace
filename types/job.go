@@ -5,9 +5,12 @@ type Job struct {
 	Step     string `yaml:"step"`
 	Source   string `yaml:"source"`
 	Template string `yaml:"template,omitempty"`
-	Wait     bool   `yaml:"wait,omitempty"`
-	View     string `yaml:"view"`
-	Retries  int    `yaml:"retries"`
+
+	DependsOn []string `yaml:"depends_on,omitempty"`
+
+	Wait    bool   `yaml:"wait,omitempty"`
+	View    string `yaml:"view"`
+	Retries int    `yaml:"retries"`
 }
 
 type JobResult interface {
