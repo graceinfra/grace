@@ -8,10 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/types"
 )
 
@@ -84,31 +82,6 @@ func listZoweProfiles() ([]types.ZoweProfile, error) {
 	}
 
 	return profiles, nil
-}
-
-func UploadJCL(ctx *context.ExecutionContext, job *types.Job) error {
-	jclPath := filepath.Join(".grace", "deck", job.Name+".jcl")
-	_, err := os.Stat(jclPath)
-	if err != nil {
-		return fmt.Errorf("unable to resolve %s. Did you run [grace deck]?", jclPath)
-	}
-
-	target := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, strings.ToUpper(job.Name))
-
-	spinnerText := fmt.Sprintf("Uploading JCL deck %s ...", strings.ToUpper(job.Name))
-	ctx.Logger.StartSpinner(spinnerText)
-
-	res, err := UploadFileToDataset(ctx, jclPath, target)
-	if err != nil {
-		return err
-	}
-
-	ctx.Logger.StopSpinner()
-
-	ctx.Logger.Info(fmt.Sprintf("✓ JCL data set submitted for job %s", job.Name))
-	ctx.Logger.Verbose(fmt.Sprintf("  From: %s", res.Data.APIResponse[0].From))
-	ctx.Logger.Verbose(fmt.Sprintf("  To:   %s", res.Data.APIResponse[0].To))
-	return nil
 }
 
 type uploadRes struct {
@@ -247,61 +220,5 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 
 	ctx.Logger.Info("Successfully allocated PDS %s", name)
 
-	return nil
-}
-
-// pollJobStatus runs zowe view job status by job ID and returns the JSON response on status 'OUTPUT'
-// or non-nil return code
-func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, error) {
-	ctx.Logger.StartSpinner("")
-	defer ctx.Logger.StopSpinner()
-
-	for {
-		time.Sleep(2 * time.Second)
-		out, err := runZowe(ctx, "zos-jobs", "view", "job-status-by-jobid", jobId, "--rfj")
-		if err != nil {
-			return nil, err
-		}
-
-		var status types.ZoweRfj
-		if err := json.Unmarshal(out, &status); err != nil {
-			ctx.Logger.Info("⚠️ Failed to parse job status")
-			return nil, err
-		}
-
-		spinnerText := fmt.Sprintf("Polling %s ... (status: %s)\n", jobId, status.Data.Status)
-		ctx.Logger.Spinner.Suffix = " " + spinnerText
-
-		if status.Data.Status == "OUTPUT" || status.Data.RetCode != nil {
-			return &status, nil
-		}
-	}
-}
-
-// saveJobExecutionRecord stores the detailed record for a single job.
-// Filename: JOBID_JOBNAME.json (e.g., JOB02929_HELLO.json)
-func saveJobExecutionRecord(logDir string, record models.JobExecutionRecord) error {
-	jobId := record.JobID
-	// Handle cases where JobID might be missing or indicate failure
-	if jobId == "" || jobId == "SUBMIT_FAILED" || jobId == "SUBMIT_UNMARSHAL_ERROR" {
-		// Create a more informative filename for failures before JobID assignment
-		timestamp := time.Now().Format("150405") // Add time to distinguish potentially same-named failures
-		jobId = fmt.Sprintf("FAILED_%s_%s", record.JobName, timestamp)
-	}
-	fileName := fmt.Sprintf("%s_%s.json", jobId, strings.ToUpper(record.JobName))
-	filePath := filepath.Join(logDir, fileName)
-
-	f, err := os.Create(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to create job log file %s: %w", filePath, err)
-	}
-	defer f.Close()
-
-	encoder := json.NewEncoder(f)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(record); err != nil {
-		return fmt.Errorf("failed to encode job log record to %s: %w", filePath, err)
-	}
-	// fmt.Printf("DEBUG: Saved detailed log to %s\n", filePath) // Optional debug log
 	return nil
 }

@@ -2,142 +2,177 @@ package zowe
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/types"
-	"github.com/spf13/cobra"
 )
 
-// SubmitJobAndWatch submits a job, waits for completion, and returns a detailed JobExecutionRecord
-func SubmitJobAndWatch(ctx *context.ExecutionContext, job *types.Job) models.JobExecutionRecord {
-	startTime := time.Now()
-
-	host, _ := os.Hostname()
-	hlq := strings.Split(ctx.Config.Datasets.JCL, ".")[0]
-	if hlq == "" {
-		cobra.CheckErr(fmt.Errorf("unable to resolve JCL dataset identifier. Is the 'jcl' field filled out under 'datasets' in grace.yml?"))
-	}
-
-	record := models.JobExecutionRecord{
-		JobName:     job.Name,
-		Step:        job.Step,
-		Source:      job.Source,
-		RetryIndex:  0,
-		GraceCmd:    ctx.GraceCmd,
-		ZoweProfile: ctx.Config.Config.Profile,
-		HLQ:         hlq,
-		Initiator: types.Initiator{
-			Type:   "user",
-			Id:     os.Getenv("USER"),
-			Tenant: host,
-		},
-		WorkflowId:     ctx.WorkflowId,
-		SubmitTime:     startTime.Format(time.RFC3339),
-		SubmitResponse: nil,
-		FinalResponse:  nil,
-	}
-
-	// --- Submit job via Zowe ---
-
-	spinnerMsg := fmt.Sprintf("Submitting job %s ...", strings.ToUpper(job.Name))
-	ctx.Logger.StartSpinner(spinnerMsg)
-
+// SubmitJob submits a job via Zowe based on a dataset member.
+// Returns the initial Zowe response or an error. Does NOT wait for completion.
+func SubmitJob(ctx *context.ExecutionContext, job *types.Job) (*types.ZoweRfj, error) {
 	qualifier := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, strings.ToUpper(job.Name))
-	rawSubmit, err := runZowe(ctx, "zos-jobs", "submit", "data-set", qualifier, "--rfj")
-	ctx.Logger.StopSpinner()
 
-	// --- Process submit response ---
+	// Note: No spinner managed here; caller should manage submit spinner
+	rawSubmit, err := runZowe(ctx, "zos-jobs", "submit", "data-set", qualifier, "--rfj")
+	if err != nil {
+		// Return rawSubmit even on error, as it might contain partial info
+		var submitResult types.ZoweRfj
+		// Attempt to unmarshal even if runZowe failed, might have partial JSON
+		_ = json.Unmarshal(rawSubmit, &submitResult)
+		// Prepend context to the error from runZowe
+		return &submitResult, fmt.Errorf("zowe submit process failed for job %s: %w", job.Name, err)
+	}
 
 	var submitResult types.ZoweRfj
 	unmarshalErr := json.Unmarshal(rawSubmit, &submitResult)
 	if unmarshalErr != nil {
-		// If unmarshalling fails, create a synthetic error response
-		record.JobID = "SUBMIT_UNMARSHAL_ERROR"
-		errMsg := fmt.Sprintf("Failed to run/parse submit command: %v, Unmarshal error: %v, Raw: %s", err, unmarshalErr, string(rawSubmit))
-		record.SubmitResponse = &types.ZoweRfj{ // Store some error info
-			Success: false,
-			Message: errMsg,
-			Error:   &types.ZoweRfjError{Msg: errMsg},
-		}
-		ctx.Logger.Error("⚠️ Job %s submission failed: %s", record.JobName, errMsg)
-	} else {
-		// Store the actual submit response
-		record.SubmitResponse = &submitResult
+		errMsg := fmt.Sprintf("failed to parse zowe submit response for job %s: %v, raw: %s", job.Name, unmarshalErr, string(rawSubmit))
+		submitResult.Success = false
+		submitResult.Message = errMsg
+		submitResult.Error = &types.ZoweRfjError{Msg: errMsg}
+		return &submitResult, fmt.Errorf(errMsg)
 	}
 
-	// Handle Zowe command execution error OR Zowe logical failure OR missing data
-	if err != nil || !submitResult.Success || submitResult.Data == nil {
-		errMsg := "Unknown submission error"
+	// Check for logical failure reported by Zowe within the JSON
+	if !submitResult.Success || submitResult.Data == nil {
+		errMsg := "unknown zowe submission error"
+		if !submitResult.Success && submitResult.Error != nil {
+			errMsg = fmt.Sprintf("zowe submission failed for job %s: %s", job.Name, submitResult.GetError())
+		} else if submitResult.Data == nil {
+			errMsg = fmt.Sprintf("zowe submission response for job %s missing 'data' field", job.Name)
+		} else {
+			errMsg = fmt.Sprintf("zowe submission failed for job %s with unknown reason", job.Name)
+		}
+		// Return the result structure containing the error details, but also return an error for flow control
+		return &submitResult, errors.New(errMsg)
+	}
+
+	return &submitResult, nil
+}
+
+// GetJobStatus retrieves the current status of a job by its ID.
+func GetJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, error) {
+	rawStatus, err := runZowe(ctx, "zos-jobs", "view", "job-status-by-jobid", jobId, "--rfj")
+	if err != nil {
+		var statusResult types.ZoweRfj
+		_ = json.Unmarshal(rawStatus, &statusResult)
+		return &statusResult, fmt.Errorf("zowe view status process failed for job %s: %w", jobId, err)
+	}
+
+	var statusResult types.ZoweRfj
+	unmarshalErr := json.Unmarshal(rawStatus, &statusResult)
+	if unmarshalErr != nil {
+		errMsg := fmt.Sprintf("failed to parse zowe status response for job %s: %v, raw: %s", jobId, unmarshalErr, string(rawStatus))
+		statusResult.Success = false
+		statusResult.Message = errMsg
+		statusResult.Error = &types.ZoweRfjError{Msg: errMsg}
+		return &statusResult, fmt.Errorf(errMsg)
+	}
+
+	if !statusResult.Success || statusResult.Data == nil {
+		errMsg := "unknown zowe view status error"
+		if !statusResult.Success && statusResult.Error != nil {
+			errMsg = fmt.Sprintf("zowe view status failed for job %s: %s", jobId, statusResult.GetError())
+		} else if statusResult.Data == nil {
+			errMsg = fmt.Sprintf("zowe view status response for job %s missing 'data' field", jobId)
+		} else {
+			errMsg = fmt.Sprintf("zowe view status failed for job %s with unknown reason", jobId)
+		}
+		return &statusResult, errors.New(errMsg)
+	}
+
+	return &statusResult, nil
+}
+
+// pollJobStatus checks job status repeatedly until a terminal state is reached.
+// Internal helper for WaitForJobCompletion.
+func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, error) {
+	// Spinner is managed WITHIN WaitForJobCompletion's loop
+	for {
+		time.Sleep(2 * time.Second)
+
+		statusResult, err := GetJobStatus(ctx, jobId)
 		if err != nil {
-			errMsg = fmt.Sprintf("Command execution failed: %v", err)
-		} else if !submitResult.Success {
-			errMsg = fmt.Sprintf("Zowe submission failed: %s", submitResult.GetError())
-		} else { // submitResult.Data == nil
-			errMsg = "Zowe submission response missing 'data' field."
+			ctx.Logger.Verbose("Polling error for %s: %v", jobId, err)
+			// Decide if we should retry or fail hard. For now, let's retry a few times implicitly.
+			// A more robust implementation would have explicit retry counts/backoff.
+			// If Zowe itself fails repeatedly, we should probably bail out.
+			// Let's return the error to let WaitForJobCompletion decide.
+			return statusResult, fmt.Errorf("failed to get job status during polling for %s: %w", jobId, err)
 		}
 
-		// Update record for failure case
-		if record.JobID == "" { // Avoid overwriting specific unmarshal error ID
-			record.JobID = "SUBMIT_FAILED"
+		// Log current status for verbose users
+		statusText := "UNKNOWN"
+		if statusResult != nil && statusResult.Data != nil {
+			statusText = statusResult.Data.Status
 		}
-		record.FinishTime = time.Now().Format(time.RFC3339)
-		record.DurationMs = time.Since(startTime).Milliseconds()
-
-		ctx.Logger.Error("⚠️ Job %s submission failed: %s", record.JobName, errMsg)
-
-		// Save the incomplete record and return
-		_ = saveJobExecutionRecord(ctx.LogDir, record) // Log the failure attempt
-		return record
-	}
-
-	// --- Submission succeeded logically ---
-
-	record.JobID = submitResult.Data.JobID
-	ctx.Logger.Info("✓ Job %s submitted with ID %s (status: %s)", record.JobName, record.JobID, submitResult.Data.Status)
-
-	// --- Poll for job completion ---
-
-	finalResult, pollErr := pollJobStatus(ctx, record.JobID)
-
-	finishTime := time.Now()
-	record.FinishTime = finishTime.Format(time.RFC3339)
-	record.DurationMs = int64(finishTime.Sub(startTime).Milliseconds())
-	record.FinalResponse = finalResult
-
-	// --- Handle polling outcome ---
-
-	if pollErr != nil {
-		// Polling failed, log it, but we still have the submit data and maybe partial final data
-		ctx.Logger.Error("⚠️ Failed to poll final status for job %s (%s): %v", record.JobName, record.JobID, pollErr)
-		// The record already contains SubmitResponse and potentially FinalResponse with error details from Zowe
-	} else if finalResult != nil && finalResult.Data != nil {
-		// Polling succeeded, log final status and RC
-		ret := "null"
-		if finalResult.Data.RetCode != nil {
-			ret = *finalResult.Data.RetCode
+		spinnerText := fmt.Sprintf("Polling %s ... (status: %s)", jobId, statusText) // Removed \n
+		if ctx.Logger.Spinner != nil {
+			ctx.Logger.Spinner.Suffix = " " + spinnerText
 		}
-		ctx.Logger.Info("✓ Job %s (%s) completed: Status %s, RC %s", record.JobName, record.JobID, finalResult.Data.Status, ret)
-	} else {
-		// Polling finished without error, but finalResult or its data is nil (unexpected)
-		ctx.Logger.Error("⚠️ Polling for job %s (%s) finished, but final status data is incomplete.", record.JobName, record.JobID)
+
+		// Check for terminal states (Success/Failure)
+		if statusResult.Data != nil {
+			switch statusResult.Data.Status {
+			case "OUTPUT", "ABEND", "JCL ERROR", "SEC ERROR", "SYSTEM FAILURE", "CANCELED":
+				return statusResult, nil
+			case "INPUT", "ACTIVE", "WAITING":
+			default:
+				ctx.Logger.Info("⚠️ Job %s polling: Received unknown status '%s'", jobId, statusResult.Data.Status)
+			}
+		} else {
+			// Should not happen if GetJobStatus error handling is correct, but safeguard
+			ctx.Logger.Error("⚠️ Polling for job %s: GetJobStatus returned success but no data", jobId)
+			// Continue polling cautiously? Or return error?
+			return statusResult, fmt.Errorf("polling for job %s received inconsistent status (success but no data)", jobId)
+		}
+
+		// TODO: Add a timeout mechanism to prevent infinite polling
+	}
+}
+
+// WaitForJobCompletion polls a job until it reaches a terminal state.
+// Manages its own polling spinner.
+func WaitForJobCompletion(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, error) {
+	spinnerText := fmt.Sprintf("Waiting for job %s to complete...", jobId)
+	ctx.Logger.StartSpinner(spinnerText)
+	defer ctx.Logger.StopSpinner()
+
+	finalStatus, err := pollJobStatus(ctx, jobId)
+	if err != nil {
+		// Error occurred during polling (e.g., repeated Zowe failures)
+		// finalStatus might contain the last known info or error details from GetJobStatus
+		return finalStatus, fmt.Errorf("error waiting for job %s completion: %w", jobId, err)
 	}
 
-	ctx.Logger.Json(record)
+	// Polling completed successfully, return the final status object
+	return finalStatus, nil
+}
 
-	// --- Save individual job log ---
-
-	// Save the complete record to JOBID_JOBNAME.json
-	saveErr := saveJobExecutionRecord(ctx.LogDir, record)
-	if saveErr != nil {
-		ctx.Logger.Error("⚠️ Failed to save detailed log for job %s (%s): %v", record.JobName, record.JobID, saveErr)
-		// Continue execution, but log the error
+// UploadJCL uploads the pre-generated JCL file for a job.
+// Spinner should be managed by the caller (e.g., cmd/deck.go).
+func UploadJCL(ctx *context.ExecutionContext, job *types.Job) (*uploadRes, error) { // Changed to return uploadRes
+	jclFileName := job.Name + ".jcl"
+	jclPath := filepath.Join(".grace", "deck", jclFileName)
+	_, err := os.Stat(jclPath)
+	if err != nil {
+		return nil, fmt.Errorf("JCL file %s not found. Did you run [grace deck]?", jclPath)
 	}
 
-	// Return the full execution record
-	return record
+	target := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, strings.ToUpper(job.Name))
+
+	res, err := UploadFileToDataset(ctx, jclPath, target)
+	if err != nil {
+		// Error could be from runZowe process error or Zowe logical error from UploadFileToDataset
+		return res, fmt.Errorf("failed to upload JCL %s to %s: %w", jclPath, target, err)
+	}
+
+	// Return the result structure on success
+	return res, nil
 }
