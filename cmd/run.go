@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/log"
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/runner"
 	"github.com/graceinfra/grace/types"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -35,7 +35,7 @@ var runCmd = &cobra.Command{
 	Short: "Execute and monitor mainframe jobs defined in grace.yml",
 	Long: `Run orchestrates the execution of mainframe jobs defined in grace.yml, submitting them in sequence and monitoring their execution until completion.
 
-It works with resources already available on the mainframe (previously uploaded via 'grace deck') and provides real-time status updates as jobs progress. Each job execution is tracked, with results and logs collected for review.
+It works with resources already available on the mainframe (previously uploaded via [grace deck]) and provides real-time status updates as jobs progress. Each job execution is tracked, with results and logs collected for review.
 
 Run creates a timestamped log directory containing job output and a summary.json file with execution details.
 
@@ -55,14 +55,12 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 			outputStyle = types.StyleHuman
 		}
 
-		// --- Read grace.yml and construct GraceConfig ---
+		// --- Load and validate grace.yml ---
 
-		ymlData, err := os.ReadFile("grace.yml")
-		cobra.CheckErr(err)
-
-		var graceCfg types.GraceConfig
-		err = yaml.Unmarshal(ymlData, &graceCfg)
-		cobra.CheckErr(err)
+		graceCfg, err := config.LoadGraceConfig("grace.yml")
+		if err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to load grace configuration: %w", err))
+		}
 
 		// --- Create log directory ---
 
@@ -78,7 +76,7 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 
 		jobExecutionRecords := runner.RunWorkflow(&context.ExecutionContext{
 			WorkflowId:  workflowId,
-			Config:      &graceCfg,
+			Config:      graceCfg,
 			Logger:      logger,
 			LogDir:      logDir,
 			OutputStyle: outputStyle,
