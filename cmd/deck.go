@@ -164,13 +164,24 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 
 			// --- Upload JCL to target data set ---
 
-			// UploadJCL has its own spinner
-			err = zowe.UploadJCL(ctx, job)
+			spinnerTextJCL := fmt.Sprintf("Uploading JCL deck %s ...", strings.ToUpper(job.Name))
+			ctx.Logger.StartSpinner(spinnerTextJCL)
+
+			jclUploadRes, err := zowe.UploadJCL(ctx, job)
 			if err != nil {
-				cobra.CheckErr(err)
+				ctx.Logger.StopSpinner()
+				cobra.CheckErr(fmt.Errorf("JCL upload failed for job %s: %w", job.Name, err))
+			}
+			ctx.Logger.StopSpinner()
+
+			ctx.Logger.Info(fmt.Sprintf("✓ JCL deck for job %q uploaded", jobName))
+			if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
+				ctx.Logger.Verbose(fmt.Sprintf("  From: %s", jclUploadRes.Data.APIResponse[0].From))
+				ctx.Logger.Verbose(fmt.Sprintf("  To:   %s", jclUploadRes.Data.APIResponse[0].To))
 			}
 
 			// --- Upload COBOL source to target data set ---
+
 			// LoadGraceConfig ensures job.Source is present for 'execute' step.
 			if job.Source == "" {
 				// If other steps might not have source, skip upload
@@ -178,28 +189,30 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 				continue
 			}
 
-			spinnerText := fmt.Sprintf("Uploading COBOL source %s ...", strings.ToUpper(job.Source))
-			ctx.Logger.StartSpinner(spinnerText)
+			spinnerTextCobol := fmt.Sprintf("Uploading COBOL source %s ...", strings.ToUpper(job.Source))
+			ctx.Logger.StartSpinner(spinnerTextCobol)
 
 			// Construct path to COBOL file
 			srcPath := filepath.Join("src", job.Source)
-			_, err := os.Stat(srcPath)
+			_, err = os.Stat(srcPath)
 			if err != nil {
 				ctx.Logger.StopSpinner()
-				cobra.CheckErr(fmt.Errorf("unable to resolve %s", srcPath))
+				cobra.CheckErr(fmt.Errorf("unable to resolve COBOL source file %s for job %s", srcPath, jobName))
 			}
 
-			res, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
+			cobolUploadRes, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
 			if err != nil {
 				ctx.Logger.StopSpinner()
-				cobra.CheckErr(fmt.Errorf("COBOL source upload to data set failed: %w\n", err))
+				cobra.CheckErr(fmt.Errorf("COBOL source upload to %s failed for job %s: %w\n", srcMember, jobName, err))
 			}
 
 			ctx.Logger.StopSpinner()
 
-			ctx.Logger.Info(fmt.Sprintf("✓ COBOL data set %s submitted for job %q\n", job.Source, jobName))
-			ctx.Logger.Verbose(fmt.Sprintf("  From: %s", res.Data.APIResponse[0].From))
-			ctx.Logger.Verbose(fmt.Sprintf("  To:   %s", res.Data.APIResponse[0].To))
+			ctx.Logger.Info(fmt.Sprintf("✓ COBOL data set %s submitted for job %q", job.Source, jobName))
+			if cobolUploadRes != nil && cobolUploadRes.Data.Success && len(cobolUploadRes.Data.APIResponse) > 0 {
+				ctx.Logger.Verbose(fmt.Sprintf("  From: %s", cobolUploadRes.Data.APIResponse[0].From))
+				ctx.Logger.Verbose(fmt.Sprintf("  To:   %s", cobolUploadRes.Data.APIResponse[0].To))
+			}
 		}
 	},
 }
