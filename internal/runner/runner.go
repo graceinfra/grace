@@ -8,16 +8,9 @@ import (
 	"github.com/graceinfra/grace/internal/zowe"
 )
 
-// RunWorkflow runs a workflow end-to-end. It covers staging JCL and submitting + watching job executions.
+// RunWorkflow runs a workflow end-to-end. It covers submitting + watching job executions.
 func RunWorkflow(ctx *context.ExecutionContext) []models.JobExecution {
 	var jobExecutions []models.JobExecution
-	for _, job := range ctx.Config.Jobs {
-		if shouldSkip(job.Name, ctx.SubmitOnly) {
-			continue
-		}
-
-		zowe.UploadJCL(ctx, job)
-	}
 
 	for _, job := range ctx.Config.Jobs {
 		if shouldSkip(job.Name, ctx.SubmitOnly) {
