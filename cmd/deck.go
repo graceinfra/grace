@@ -203,7 +203,8 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 
 			ctx.Logger.StopSpinner()
 
-			ctx.Logger.Info(fmt.Sprintf("\n✓ COBOL data set submitted for job %s\nFrom: %s\nTo: %s\n", jobName, res.Data.APIResponse[0].From, res.Data.APIResponse[0].To))
+			ctx.Logger.Info(fmt.Sprintf("✓ COBOL data set submitted for job %s\n", jobName))
+			ctx.Logger.Verbose(fmt.Sprintf("From: %s\nTo: %s\n", res.Data.APIResponse[0].From, res.Data.APIResponse[0].To))
 		}
 	},
 }

@@ -12,29 +12,59 @@ import (
 	"time"
 
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/log"
+	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/types"
 )
 
-// runZowe invokes `zowe <args...>` under the hood and
-// returns stdout bytes (for parsing) or an error.
+// runZowe invokes `zowe <args...>` and returns the stdout bytes and potentially
+// an error.
+//
+// The returned error indicates issues executing the 'zowe' process itself
+// (e.g., command not found, permission errors). It DOES NOT indicate logical
+// errors reported by Zowe CLI within its output (e.g., "job not found",
+// authentication failure when using --rfj).
+//
+// Callers MUST inspect the returned byte slice (typically by unmarshalling
+// the JSON response when using --rfj) to check for Zowe-level success or failure,
+// even when the returned error is nil.
+//
+// Stderr from the Zowe command is logged verbosely if not empty, but not
+// typically included in the returned error unless the process execution fails.
 func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
 	cmd := exec.Command("zowe", args...)
 
 	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf // Capture stdout
+	cmd.Stderr = &errBuf // Capture stderr
 	cmd.Stdin = os.Stdin
 
-	ctx.Logger.Verbose("Running: zowe %v", args)
-
-	// Pipe stdout/stderr to a buffer instead of immediately displaying it
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
+	ctx.Logger.Verbose("Running: zowe %v", strings.Join(args, " "))
 
 	err := cmd.Run()
-	if err != nil {
-		return outBuf.Bytes(), fmt.Errorf("\nzowe %v failed: %w\n%s\n%s", args, err, errBuf.String(), outBuf.String())
+
+	// Get stdout and stderr content regardless of error
+	stdoutBytes := outBuf.Bytes()
+	stderrString := errBuf.String()
+
+	// Log stderr content if verbose logging is enabled and stderr is not empty
+	if stderrString != "" {
+		ctx.Logger.Verbose("stderr from 'zowe %s':\n%s", strings.Join(args, " "), stderrString)
 	}
-	return outBuf.Bytes(), err
+
+	// Handle process execution errors (e.g., command not found, non-zero exit code)
+	if err != nil {
+		// Process execution failed. Return stdout (it might still contain partial JSON/info)
+		// and a comprehensive error including the original error and stderr.
+		return stdoutBytes, fmt.Errorf("zowe process execution failed for 'zowe %s': %w\nstderr:\n%s",
+			strings.Join(args, " "),
+			err,
+			stderrString) // Include stderr in the error message only on process failure
+	}
+
+	// Process execution succeeded (exit code 0).
+	// Return the captured stdout and nil error.
+	// The caller is responsible for checking the content of stdout (e.g., the 'success' field in JSON).
+	return stdoutBytes, nil
 }
 
 func listZoweProfiles() ([]types.ZoweProfile, error) {
@@ -245,28 +275,30 @@ func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj,
 	}
 }
 
-// saveZoweLog stores a parsed Zowe result to
-// .grace/logs/20250423T213245_submit/JOB02848_HELLO.json
-// (example log dir and file name)
-func saveZoweLog(logDir string, ctx log.LogContext, payload any) error {
-	// Filename: JOB02848_HELLO.json
-	fileName := fmt.Sprintf("%s_%s.json", ctx.JobID, strings.ToUpper(ctx.JobName))
+// saveJobExecutionRecord stores the detailed record for a single job.
+// Filename: JOBID_JOBNAME.json (e.g., JOB02929_HELLO.json)
+func saveJobExecutionRecord(logDir string, record models.JobExecutionRecord) error {
+	jobId := record.JobID
+	// Handle cases where JobID might be missing or indicate failure
+	if jobId == "" || jobId == "SUBMIT_FAILED" || jobId == "SUBMIT_UNMARSHAL_ERROR" {
+		// Create a more informative filename for failures before JobID assignment
+		timestamp := time.Now().Format("150405") // Add time to distinguish potentially same-named failures
+		jobId = fmt.Sprintf("FAILED_%s_%s", record.JobName, timestamp)
+	}
+	fileName := fmt.Sprintf("%s_%s.json", jobId, strings.ToUpper(record.JobName))
 	filePath := filepath.Join(logDir, fileName)
 
-	// Wrap full log context
-	logObj := log.GraceJobLog{
-		LogContext: ctx,
-		Result:     payload,
-	}
-
-	// Write to disk
 	f, err := os.Create(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create job log file %s: %w", filePath, err)
 	}
 	defer f.Close()
 
 	encoder := json.NewEncoder(f)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(logObj)
+	if err := encoder.Encode(record); err != nil {
+		return fmt.Errorf("failed to encode job log record to %s: %w", filePath, err)
+	}
+	// fmt.Printf("DEBUG: Saved detailed log to %s\n", filePath) // Optional debug log
+	return nil
 }

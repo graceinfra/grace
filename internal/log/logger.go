@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/briandowns/spinner"
+	"github.com/google/uuid"
 	"github.com/graceinfra/grace/types"
 )
 
@@ -80,6 +81,13 @@ func (l *GraceLogger) Verbose(msg string, args ...any) {
 	// Silent for normal human and machine modes
 }
 
+func (l *GraceLogger) Error(msg string, args ...any) {
+	if l.OutputStyle == types.StyleHuman || l.OutputStyle == types.StyleHumanVerbose {
+		fmt.Printf(msg+"\n", args...)
+	}
+	// Silent for machine modes
+}
+
 func (l *GraceLogger) Json(data any) {
 	if l.OutputStyle == types.StyleMachineJSON {
 		encoded, _ := json.MarshalIndent(data, "", "  ")
@@ -107,15 +115,16 @@ func (l *GraceLogger) StopSpinner() {
 }
 
 // CreateLogDir returns a full path like
-// ".grace/logs/20250423T213245_submit"
-func CreateLogDir(graceCmd string) (string, string, error) {
-	timestamp := time.Now().Format("20060102T150405")
-	dirName := fmt.Sprintf("%s_%s", timestamp, graceCmd)
+// ".grace/logs/20250423T213245_submit_3c43e9f4-9026-4d04-ba06-054e8903e80a"
+func CreateLogDir(workflowId uuid.UUID, workflowStartTime time.Time, graceCmd string) (string, error) {
+	timestampStr := workflowStartTime.Format("20060102T150405")
+
+	dirName := fmt.Sprintf("%s_%s_%s", timestampStr, graceCmd, workflowId)
 	fullPath := filepath.Join(".grace", "logs", dirName)
 
 	err := os.MkdirAll(fullPath, os.ModePerm)
 	if err != nil {
-		return "", "", err
+		return "", fmt.Errorf("failed to create log directory '%s': %w", fullPath, err)
 	}
-	return fullPath, timestamp, nil
+	return fullPath, nil
 }

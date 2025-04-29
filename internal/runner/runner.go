@@ -9,8 +9,8 @@ import (
 )
 
 // RunWorkflow runs a workflow end-to-end. It covers submitting + watching job executions.
-func RunWorkflow(ctx *context.ExecutionContext) []models.JobExecution {
-	var jobExecutions []models.JobExecution
+func RunWorkflow(ctx *context.ExecutionContext) []models.JobExecutionRecord {
+	var jobExecutions []models.JobExecutionRecord
 
 	for _, job := range ctx.Config.Jobs {
 		if shouldSkip(job.Name, ctx.SubmitOnly) {
