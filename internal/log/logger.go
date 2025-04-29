@@ -10,47 +10,9 @@ import (
 
 	"github.com/briandowns/spinner"
 	"github.com/google/uuid"
+	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/types"
 )
-
-type GraceJobLog struct {
-	LogContext
-	Result any `json:"result"`
-}
-
-type LogContext struct {
-	JobID       string          `json:"job_id"`   // "JOB02848"
-	JobName     string          `json:"job_name"` // "HELLO"
-	Step        string          `json:"step"`     // "execute", "compile"
-	RetryIndex  int             `json:"retry_index"`
-	GraceCmd    string          `json:"grace_cmd"`    // submit", "run"
-	ZoweProfile string          `json:"zowe_profile"` // "zosmf", "ssh", "tso"
-	HLQ         string          `json:"hlq"`          // "IBMUSER"
-	Timestamp   string          `json:"timestamp"`    // RFC3339 format
-	Initiator   types.Initiator `json:"initiator"`
-}
-
-// NewLogContext builds a reusable log context
-func NewLogContext(job *types.Job, jobId, jobName, graceCmd string, cfg *types.GraceConfig) LogContext {
-	hlq := strings.Split(cfg.Datasets.JCL, ".")[0]
-	host, _ := os.Hostname()
-
-	return LogContext{
-		JobID:       jobId,
-		JobName:     jobName,
-		Step:        job.Step,
-		RetryIndex:  0,
-		GraceCmd:    graceCmd,
-		ZoweProfile: cfg.Config.Profile,
-		HLQ:         hlq,
-		Timestamp:   time.Now().Format(time.RFC3339),
-		Initiator: types.Initiator{
-			Type:   "user",
-			Id:     os.Getenv("USER"),
-			Tenant: host,
-		},
-	}
-}
 
 type GraceLogger struct {
 	OutputStyle types.OutputStyle
@@ -83,7 +45,7 @@ func (l *GraceLogger) Verbose(msg string, args ...any) {
 
 func (l *GraceLogger) Error(msg string, args ...any) {
 	if l.OutputStyle == types.StyleHuman || l.OutputStyle == types.StyleHumanVerbose {
-		fmt.Printf(msg+"\n", args...)
+		fmt.Fprintf(os.Stderr, "Error: "+msg+"\n", args...)
 	}
 	// Silent for machine modes
 }
@@ -127,4 +89,31 @@ func CreateLogDir(workflowId uuid.UUID, workflowStartTime time.Time, graceCmd st
 		return "", fmt.Errorf("failed to create log directory '%s': %w", fullPath, err)
 	}
 	return fullPath, nil
+}
+
+// SaveJobExecutionRecord stores the detailed record for a single job.
+// Filename: JOBID_JOBNAME.json (e.g., JOB02929_HELLO.json)
+func SaveJobExecutionRecord(logDir string, record models.JobExecutionRecord) error {
+	jobId := record.JobID
+	// Handle cases where JobID might be missing or indicate failure
+	if jobId == "" || jobId == "SUBMIT_FAILED" || jobId == "SUBMIT_UNMARSHAL_ERROR" {
+		// Create a more informative filename for failures before JobID assignment
+		timestamp := time.Now().Format("150405") // Add time to distinguish potentially same-named failures
+		jobId = fmt.Sprintf("FAILED_%s_%s", record.JobName, timestamp)
+	}
+	fileName := fmt.Sprintf("%s_%s.json", jobId, strings.ToUpper(record.JobName))
+	filePath := filepath.Join(logDir, fileName)
+
+	f, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create job log file %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	encoder := json.NewEncoder(f)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(record); err != nil {
+		return fmt.Errorf("failed to encode job log record to %s: %w", filePath, err)
+	}
+	return nil
 }
