@@ -7,16 +7,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/graceinfra/grace/internal/context"
+	"github.com/graceinfra/grace/internal/log"
+	"github.com/graceinfra/grace/internal/models"
+	"github.com/graceinfra/grace/internal/runner"
 	"github.com/graceinfra/grace/types"
-	"github.com/graceinfra/grace/utils"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
 var (
 	wantJSON   bool
-	wantSpool  bool
 	submitOnly []string
 )
 
@@ -24,7 +25,6 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 
 	runCmd.Flags().BoolVar(&wantJSON, "json", false, "Return structured JSON data about each job")
-	runCmd.Flags().BoolVar(&wantSpool, "spool", false, "Return full spool content for each job")
 	runCmd.Flags().StringSliceVar(&submitOnly, "only", nil, "Submit only specified job(s)")
 }
 
@@ -33,13 +33,21 @@ var runCmd = &cobra.Command{
 	Short: "Run a Grace workflow end-to-end, waiting for each job to complete",
 	Long:  `Run reads grace.yml and orchestrates jobs in order, submitting one at a time and waiting for results.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if wantJSON && wantSpool {
-			cobra.CheckErr("--json and --spool cannot be used together")
+		// --- Decide output style ---
+		// Are we user facing? Part of a pipeline? This will let the logger
+		// know whether to show animations, verbose text, etc.)
+
+		var outputStyle types.OutputStyle
+		switch {
+		case wantJSON:
+			outputStyle = types.StyleMachineJSON
+		case Verbose:
+			outputStyle = types.StyleHumanVerbose
+		default:
+			outputStyle = types.StyleHuman
 		}
 
-		quiet := wantJSON || wantSpool
-		wantVerbose := Verbose
-		useSpinner := term.IsTerminal(int(os.Stdout.Fd())) && !quiet
+		// --- Read grace.yml and construct GraceConfig ---
 
 		ymlData, err := os.ReadFile("grace.yml")
 		cobra.CheckErr(err)
@@ -48,14 +56,29 @@ var runCmd = &cobra.Command{
 		err = yaml.Unmarshal(ymlData, &graceCfg)
 		cobra.CheckErr(err)
 
-		logDir, _, err := utils.CreateLogDir("run")
+		// --- Create log directory ---
+
+		logDir, _, err := log.CreateLogDir("run")
 		cobra.CheckErr(err)
 
-		jobExecutions := utils.RunWorkflow(graceCfg, logDir, wantSpool, wantJSON, wantVerbose, quiet, useSpinner, submitOnly)
+		// --- Run workflow ---
+
+		logger := log.NewLogger(outputStyle)
+
+		jobExecutions := runner.RunWorkflow(&context.ExecutionContext{
+			Config:      &graceCfg,
+			Logger:      logger,
+			LogDir:      logDir,
+			OutputStyle: outputStyle,
+			SubmitOnly:  submitOnly,
+			GraceCmd:    "run",
+		})
+
+		// --- Construct workflow summary ---
 
 		host, _ := os.Hostname()
 
-		summary := types.ExecutionSummary{
+		summary := models.ExecutionSummary{
 			Timestamp:   time.Now().Format(time.RFC3339),
 			GraceCmd:    "run",
 			ZoweProfile: graceCfg.Config.Profile,
@@ -67,6 +90,8 @@ var runCmd = &cobra.Command{
 			},
 			Jobs: jobExecutions,
 		}
+
+		// --- Write workflow summary to summary.json ---
 
 		formatted, err := json.MarshalIndent(summary, "", "  ")
 		cobra.CheckErr(err)
