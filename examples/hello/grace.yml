@@ -2,9 +2,9 @@ config:
   profile: zosmf
 
 datasets:
-  jcl: Z71041.HELLO.GRC.JCL
-  src: Z71041.HELLO.GRC.SRC
-  loadlib: Z71041.LOAD
+  jcl: Z71405.HELLO.GRC.JCL
+  src: Z71405.HELLO.GRC.SRC
+  loadlib: Z71405.LOAD
 
 jobs:
   - name: hello
