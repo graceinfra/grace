@@ -15,21 +15,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func UploadJCL(ctx *context.ExecutionContext, job *types.Job) {
+func UploadJCL(ctx *context.ExecutionContext, job *types.Job) error {
 	jclPath := filepath.Join(".grace", "deck", job.Name+".jcl")
 	_, err := os.Stat(jclPath)
 	if err != nil {
-		cobra.CheckErr(fmt.Errorf("unable to resolve %s. Did you run [grace deck]?", jclPath))
+		return fmt.Errorf("unable to resolve %s. Did you run [grace deck]?", jclPath)
 	}
 
 	target := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, strings.ToUpper(job.Name))
 
-	ctx.Logger.Verbose("Uploading " + target)
-
 	res, err := UploadFileToDataset(ctx, jclPath, target)
-	cobra.CheckErr(err)
+	if err != nil {
+		return err
+	}
 
 	ctx.Logger.Info(fmt.Sprintf("\n✓ JCL data set submitted for job %s\nFrom: %s\nTo: %s\n", job.Name, res.Data.APIResponse[0].From, res.Data.APIResponse[0].To))
+	return nil
 }
 
 func SubmitJobAndWatch(ctx *context.ExecutionContext, job *types.Job) models.JobExecution {
