@@ -11,7 +11,7 @@ type GraceConfig struct {
 		LoadLib string `yaml:"loadlib"`
 	} `yaml:"datasets"`
 
-	Jobs []Job `yaml:"jobs"`
+	Jobs []*Job `yaml:"jobs"`
 }
 
 type ZoweConfig struct {
@@ -26,3 +26,11 @@ type ZoweProfile struct {
 	Properties map[string]any `json:"properties"`
 	Secure     []string       `json:"secure"`
 }
+
+type OutputStyle int
+
+const (
+	StyleHuman OutputStyle = iota
+	StyleHumanVerbose
+	StyleMachineJSON
+)

@@ -22,13 +22,14 @@ type ZoweRfj struct {
 	Message  string        `json:"message"`
 	Stdout   string        `json:"stdout"`
 	Stderr   string        `json:"stderr"`
-	Data     ZoweRfjData   `json:"data,omitempty"`
+	Data     *ZoweRfjData  `json:"data,omitempty"`
 	Error    *ZoweRfjError `json:"error,omitempty"`
 }
 
 func (r ZoweRfj) GetJobName() string { return r.Data.JobName }
 func (r ZoweRfj) GetJobID() string   { return r.Data.JobID }
 func (r ZoweRfj) GetStatus() string  { return r.Data.Status }
+func (r ZoweRfj) GetError() string   { return r.Error.Msg }
 
 type ZoweRfjData struct {
 	JobID     string  `json:"jobid"`
@@ -62,54 +63,10 @@ type ZoweRfjError struct {
 	Additional  string           `json:"additionalDetails"`
 }
 
-type LogContext struct {
-	JobID       string    `json:"job_id"`   // "JOB02848"
-	JobName     string    `json:"job_name"` // "HELLO"
-	Step        string    `json:"step"`     // "execute", "compile"
-	RetryIndex  int       `json:"retry_index"`
-	GraceCmd    string    `json:"grace_cmd"`    // submit", "run"
-	ZoweProfile string    `json:"zowe_profile"` // "zosmf", "ssh", "tso"
-	HLQ         string    `json:"hlq"`          // "IBMUSER.GRC"
-	Timestamp   string    `json:"timestamp"`    // RFC3339 format
-	Initiator   Initiator `json:"initiator"`
-}
-
+// Initiator stores information about who initiated a workflow - whether
+// it's a user, service account, or part of a CI pipeline
 type Initiator struct {
 	Type   string `json:"type"`   // "user", "service", "ci"
 	Id     string `json:"id"`     // "arnav", "grace-runner-01234"
 	Tenant string `json:"tenant"` // "ca-dmv"
-}
-
-type GraceJobLog struct {
-	LogContext
-	Result any `json:"result"`
-}
-
-type ExecutionSummary struct {
-	Timestamp   string         `json:"timestamp"`
-	GraceCmd    string         `json:"grace_cmd"`
-	ZoweProfile string         `json:"zowe_profile"`
-	HLQ         string         `json:"hlq"`
-	Initiator   Initiator      `json:"initiator"`
-	Jobs        []JobExecution `json:"jobs"`
-}
-
-type JobExecution struct {
-	Job    JobInJobExecution `json:"job"`
-	Submit ZoweJobData       `json:"submit"`
-	Result ZoweJobData       `json:"result"`
-}
-
-type JobInJobExecution struct {
-	Name       string `json:"name"`
-	ID         string `json:"id"`
-	Step       string `json:"step"`
-	RetryIndex int    `json:"retry_index"`
-	Spooled    bool   `json:"spooled"`
-}
-
-type ZoweJobData struct {
-	Status  string  `json:"status"`
-	Retcode *string `json:"retcode"` // can be null
-	Time    string  `json:"time"`
 }
