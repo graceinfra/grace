@@ -126,7 +126,7 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 
 			// Generate relative log file path
 			logFileName := fmt.Sprintf("%s_%s.json", record.JobID, strings.ToUpper(record.JobName))
-			relativeLogPath := filepath.Join(filepath.Base(logDir), logFileName) // e.g., "20230101T120000_run/JOB12345_MYJOB.json"
+			relativeLogPath := filepath.Join(filepath.Base(logDir), logFileName) // e.g., "[timestamp]_run_[UUID]/JOB12345_MYJOB.json"
 
 			summary := models.JobSummary{
 				JobName:    record.JobName,
