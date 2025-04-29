@@ -74,18 +74,20 @@ type uploadRes struct {
 func UploadFileToDataset(ctx *context.ExecutionContext, path, member string) (*uploadRes, error) {
 	// Delete old member
 	// We manually call os/exec here instead of using the runZowe helper
-	// so that we can ignore dataset deletion error if the member doesn't exist
+	// so that we can ignore dataset deletion error if the member doesn't exist.
 	//
 	// We do this because there is no easy way to simply overwrite a data set if it exists,
-	// so we delete and upload.
-	ctx.Logger.Verbose("Running: zowe zos-files delete data-set %s -f --rfj", member)
+	// so we delete and reupload to maintain idempotency.
+	quotedMember := `"` + member + `"`
+	ctx.Logger.Verbose("Running: zowe zos-files delete data-set %s -f --rfj", quotedMember)
 
 	var silencedBuf bytes.Buffer
-	cmd := exec.Command("zowe", "zos-files", "delete", "data-set", `"`+member+`"`, "-f", "--rfj")
+	cmd := exec.Command("zowe", "zos-files", "delete", "data-set", quotedMember, "-f", "--rfj")
 	cmd.Stdout = &silencedBuf
 	cmd.Stderr = &silencedBuf
 	_ = cmd.Run()
 
+	// Regular runZowe call for uploading file
 	out, err := runZowe(ctx, "zos-files", "upload", "file-to-data-set", path, member, "--rfj")
 	if err != nil {
 		return nil, err
@@ -218,8 +220,7 @@ func ValidateDataSetQualifiers(name string) error {
 // pollJobStatus runs zowe view job status by job ID and returns the JSON response on status 'OUTPUT'
 // or non-nil return code
 func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, error) {
-	spinnerText := fmt.Sprintf("Polling %s ...", jobId)
-	ctx.Logger.StartSpinner(spinnerText)
+	ctx.Logger.StartSpinner("")
 	defer ctx.Logger.StopSpinner()
 
 	for {
@@ -235,7 +236,7 @@ func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj,
 			return nil, err
 		}
 
-		spinnerText = fmt.Sprintf("Polling %s... (status: %s)", jobId, status.Data.Status)
+		spinnerText := fmt.Sprintf("Polling %s ... (status: %s)\n", jobId, status.Data.Status)
 		ctx.Logger.Spinner.Suffix = " " + spinnerText
 
 		if status.Data.Status == "OUTPUT" || status.Data.RetCode != nil {
