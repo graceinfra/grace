@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
+	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/log"
+	"github.com/graceinfra/grace/internal/executor"
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/templates"
 	"github.com/graceinfra/grace/internal/zowe"
@@ -159,17 +159,9 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 	return nil
 }
 
-// Run implements the job execution and monitoring logic.
+// Run implements the DAG job execution and monitoring logic using the executor.
 func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecutionRecord, error) {
-	var jobExecutions []models.JobExecutionRecord
-
 	// --- Pre-Loop Validations / Setup ---
-
-	host, err := os.Hostname()
-	if err != nil {
-		ctx.Logger.Error("⚠️ Failed to get hostname: %v. Using default.", err)
-		host = "unknown"
-	}
 
 	hlq := ""
 	if ctx.Config.Datasets.JCL != "" {
@@ -183,111 +175,42 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 	}
 	ctx.Logger.Verbose("Using HLQ: %s for initiator info", hlq)
 
-	for _, job := range ctx.Config.Jobs {
-		fmt.Println() // Newline
+	// --- Build job graph ---
 
-		// Skip based on --only
-		if len(ctx.SubmitOnly) > 0 && !slices.Contains(ctx.SubmitOnly, job.Name) {
-			ctx.Logger.Verbose("Skipping job %q due to --only filter", job.Name)
-			continue
-		}
-
-		startTime := time.Now()
-
-		record := models.JobExecutionRecord{
-			JobName:     job.Name,
-			JobID:       "PENDING", // Initial state before submit attempt
-			Step:        job.Step,
-			Source:      job.Source,
-			RetryIndex:  0,
-			GraceCmd:    ctx.GraceCmd,
-			ZoweProfile: ctx.Config.Config.Profile,
-			HLQ:         hlq,
-			Initiator: types.Initiator{
-				Type:   "user",
-				Id:     os.Getenv("USER"),
-				Tenant: host,
-			},
-			WorkflowId:     ctx.WorkflowId,
-			SubmitTime:     startTime.Format(time.RFC3339),
-			SubmitResponse: nil,
-			FinalResponse:  nil,
-			// FinishTime and DurationMs set later
-		}
-
-		// --- Submit job ---
-
-		spinnerMsg := fmt.Sprintf("Submitting job %s ...", strings.ToUpper(job.Name))
-		ctx.Logger.StartSpinner(spinnerMsg)
-
-		submitResult, submitErr := zowe.SubmitJob(ctx, job)
-		record.SubmitResponse = submitResult
-
-		ctx.Logger.StopSpinner()
-
-		// --- Handle submit outcome ---
-
-		if submitErr != nil {
-			// Error could be process error or Zowe logical error from SubmitJob
-			record.JobID = "SUBMIT_FAILED"
-			record.FinishTime = time.Now().Format(time.RFC3339)
-			record.DurationMs = time.Since(startTime).Milliseconds()
-			ctx.Logger.Error("⚠️ Job %s submission failed: %v", record.JobName, submitErr)
-
-			// Log the record even on failure
-			_ = log.SaveJobExecutionRecord(ctx.LogDir, record)
-			jobExecutions = append(jobExecutions, record)
-
-			// Move to the next job
-			continue
-		}
-
-		record.JobID = submitResult.Data.JobID
-		ctx.Logger.Info("✓ Job %s submitted with ID %s (status: %s)", record.JobName, record.JobID, submitResult.Data.Status)
-
-		// --- Wait for job completion ---
-
-		spinnerText := fmt.Sprintf("Waiting for job %s to complete...", record.JobID)
-		ctx.Logger.StartSpinner(spinnerText)
-
-		finalResult, waitErr := zowe.WaitForJobCompletion(ctx, record.JobID)
-		record.FinalResponse = finalResult
-
-		ctx.Logger.StopSpinner()
-
-		finishTime := time.Now()
-		record.FinishTime = finishTime.Format(time.RFC3339)
-		record.DurationMs = int64(finishTime.Sub(startTime).Milliseconds())
-
-		// --- Handle completion outcome ---
-
-		if waitErr != nil {
-			ctx.Logger.Error("⚠️ Failed to get final status for job %s (%s): %v", record.JobName, record.JobID, waitErr)
-		} else if finalResult != nil && finalResult.Data != nil {
-			retCode := "null"
-			if finalResult.Data.RetCode != nil {
-				retCode = *finalResult.Data.RetCode
-			}
-			ctx.Logger.Info("✓ Job %s (%s) completed: Status %s, RC %s", record.JobName, record.JobID, finalResult.Data.Status, retCode)
-		} else {
-			ctx.Logger.Error("⚠️ Polling for job %s (%s) finished, but final status data is incomplete.", record.JobName, record.JobID)
-		}
-
-		ctx.Logger.Json(record)
-
-		// --- Save detailed log ---
-
-		saveErr := log.SaveJobExecutionRecord(ctx.LogDir, record)
-		if saveErr != nil {
-			ctx.Logger.Error("⚠️ Failed to save detailed log for job %s (%s): %v", record.JobName, record.JobID, saveErr)
-		}
-
-		jobExecutions = append(jobExecutions, record)
-
-		// TODO: Add logic for overall workflow failure (e.g. stop processing if a job ABENDs?)
+	// Assumes ValidateGraceConfig (including cycle check)
+	ctx.Logger.Verbose("Building job graph from configuration...")
+	jobGraph, graphErr := config.BuildJobGraph(ctx.Config)
+	if graphErr != nil {
+		return nil, fmt.Errorf("orchestration failed: could not build job graph: %w", graphErr)
 	}
 
-	return jobExecutions, nil
+	// Handle case where config is valid but has no jobs
+	if len(jobGraph) == 0 {
+		ctx.Logger.Info("No jobs defined in the configuration. Workflow finished.")
+		return []models.JobExecutionRecord{}, nil
+	}
+	ctx.Logger.Verbose("Job graph built successfully with %d nodes.", len(jobGraph))
+
+	// --- Create and run executor ---
+
+	// TODO: Allow concurrency to be configurable via grace.yml or flags
+	exec := executor.NewExecutor(ctx, jobGraph, 0) // 0 triggers default concurrency
+
+	ctx.Logger.Verbose("Invoking executor...")
+	jobExecutionRecords, execErr := exec.ExecuteAndWait()
+	// NOTE: execErr represents errors from the executor's own logic (e.g. deadlock)
+	// not individual job failures. Those are captured in the jobExecutionRecords.
+
+	if execErr != nil {
+		ctx.Logger.Error("Executor encountered and error: %v", execErr)
+
+		// Return the records collected so far anyways so that the caller can still generate
+		// a partial summary
+		return jobExecutionRecords, fmt.Errorf("DAG execution failed: %w", execErr)
+	}
+
+	ctx.Logger.Info("✓ Executor finished successfully.")
+	return jobExecutionRecords, nil
 }
 
 func (o *zoweOrchestrator) Submit(ctx *context.ExecutionContext) ([]*types.ZoweRfj, error) {
