@@ -14,3 +14,8 @@ jobs:
   - name: hello2
     step: execute
     source: hello.cbl
+
+  - name: hello3
+    step: execute
+    source: hello.cbl
+    depends_on: [hello, hello2]
