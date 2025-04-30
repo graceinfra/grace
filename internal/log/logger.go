@@ -50,6 +50,13 @@ func (l *GraceLogger) Error(msg string, args ...any) {
 	// Silent for machine modes
 }
 
+func (l *GraceLogger) Warn(msg string, args ...any) {
+	if l.OutputStyle == types.StyleHuman || l.OutputStyle == types.StyleHumanVerbose {
+		fmt.Fprintf(os.Stderr, "Warning: "+msg+"\n", args...)
+	}
+	// Silent for machine modes
+}
+
 func (l *GraceLogger) Json(data any) {
 	if l.OutputStyle == types.StyleMachineJSON {
 		encoded, _ := json.MarshalIndent(data, "", "  ")
