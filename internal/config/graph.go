@@ -12,6 +12,8 @@ type JobNode struct {
 	Dependents   []*JobNode
 }
 
+// BuildJobGraph creates the validated graph representation from the config.
+// Assumes ValidateGraceConfig has already been called.
 func BuildJobGraph(cfg *types.GraceConfig) (map[string]*JobNode, error) {
 	jobMap := make(map[string]*types.Job, len(cfg.Jobs))
 	jobGraph := make(map[string]*JobNode, len(cfg.Jobs))

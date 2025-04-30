@@ -176,6 +176,7 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 	return errs
 }
 
+// validateDependenciesAndBuildGraph checks if dependencies exist and populates the graph structure
 func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string]*types.Job, jobGraph map[string]*JobNode) []string {
 	var errs []string
 
