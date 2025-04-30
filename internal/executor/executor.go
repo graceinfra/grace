@@ -51,7 +51,7 @@ type Executor struct {
 	maxConcurrency    int
 	concurrencyChan   chan struct{} // Semaphore to limit concurrency
 	jobCompletionChan chan struct{} // Channel to signal job completion
-	errChan           chan error
+	errChan           chan error    // For fatal errors (not currently used) TODO (?)
 }
 
 const DefaultConcurrency = 5
@@ -140,8 +140,9 @@ func (e *Executor) ExecuteAndWait() ([]models.JobExecutionRecord, error) {
 				activeGoroutines--
 			case err := <-e.errChan:
 				e.ctx.Logger.Error("Fatal error received from job goroutine: %v", err)
+				// TODO: Implement cancellation logic here? (signal other goroutines to stop)
 				return e.collectFinalResults(), err
-			case <-time.After(30 * time.Second):
+			case <-time.After(60 * time.Second):
 				e.ctx.Logger.Warn("Timeout waiting for job completion signal.")
 			}
 		}
@@ -202,7 +203,7 @@ func (e *Executor) allJobsDone() bool {
 	return true // All jobs are in a terminal state
 }
 
-// checkAndReadyJobs transitions PENDING jobs to READY if dependencies are met
+// checkAndReadyJobs transitions PENDING jobs to READY if dependencies are met, otherwise PENDING
 func (e *Executor) checkAndReadyJobs() {
 	e.stateMutex.Lock()
 	defer e.stateMutex.Unlock()

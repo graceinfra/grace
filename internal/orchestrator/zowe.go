@@ -193,8 +193,8 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 
 	// --- Create and run executor ---
 
-	// TODO: Allow concurrency to be configurable via grace.yml or flags
-	exec := executor.NewExecutor(ctx, jobGraph, 0) // 0 triggers default concurrency
+	// We pass the max concurrency value from grace.yml here
+	exec := executor.NewExecutor(ctx, jobGraph, ctx.Config.Config.Concurrency)
 
 	ctx.Logger.Verbose("Invoking executor...")
 	jobExecutionRecords, execErr := exec.ExecuteAndWait()

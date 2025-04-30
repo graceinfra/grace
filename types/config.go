@@ -2,7 +2,8 @@ package types
 
 type GraceConfig struct {
 	Config struct {
-		Profile string `yaml:"profile"`
+		Profile     string `yaml:"profile"`
+		Concurrency int    `yaml:"concurrency"`
 	} `yaml:"config"`
 
 	Datasets struct {

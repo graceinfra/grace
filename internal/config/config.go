@@ -97,6 +97,10 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 	}
 	// Potential future validation: check if profile exists in Zowe config
 
+	if cfg.Config.Concurrency < 0 {
+		errs = append(errs, fmt.Sprintf("field 'concurrency' cannot be negative"))
+	}
+
 	// --- Validate 'datasets' section ---
 	if cfg.Datasets.JCL == "" {
 		errs = append(errs, "field 'datasets.jcl' is required")
