@@ -138,12 +138,7 @@ func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj,
 }
 
 // WaitForJobCompletion polls a job until it reaches a terminal state.
-// Manages its own polling spinner.
 func WaitForJobCompletion(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, error) {
-	spinnerText := fmt.Sprintf("Waiting for job %s to complete...", jobId)
-	ctx.Logger.StartSpinner(spinnerText)
-	defer ctx.Logger.StopSpinner()
-
 	finalStatus, err := pollJobStatus(ctx, jobId)
 	if err != nil {
 		// Error occurred during polling (e.g., repeated Zowe failures)

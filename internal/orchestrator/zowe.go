@@ -247,9 +247,13 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 
 		// --- Wait for job completion ---
 
-		// WaitForJobCompletion handles its own spinner
+		spinnerText := fmt.Sprintf("Waiting for job %s to complete...", record.JobID)
+		ctx.Logger.StartSpinner(spinnerText)
+
 		finalResult, waitErr := zowe.WaitForJobCompletion(ctx, record.JobID)
 		record.FinalResponse = finalResult
+
+		ctx.Logger.StopSpinner()
 
 		finishTime := time.Now()
 		record.FinishTime = finishTime.Format(time.RFC3339)
