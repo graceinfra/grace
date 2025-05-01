@@ -15,7 +15,6 @@ import (
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/templates"
 	"github.com/graceinfra/grace/internal/zowe"
-	"github.com/graceinfra/grace/types"
 )
 
 type zoweOrchestrator struct{} // No fields, state comes from ExecutionContext
@@ -218,8 +217,4 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 
 	runLogger.Info().Msg("✓ Executor finished successfully.")
 	return jobExecutionRecords, nil
-}
-
-func (o *zoweOrchestrator) Submit(ctx *context.ExecutionContext) ([]*types.ZoweRfj, error) {
-	return nil, nil
 }
