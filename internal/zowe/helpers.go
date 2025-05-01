@@ -154,6 +154,33 @@ type listRes struct {
 	} `json:"data"`
 }
 
+// CheckPDSExists checks if a partitioned data set exists. It DOES NOT create it.
+func CheckPDSExists(ctx *context.ExecutionContext, name string) (bool, error) {
+	zoweLogger := log.With().
+		Str("component", "zowe_cli").
+		Str("workflow_id", ctx.WorkflowId.String()).
+		Logger()
+
+	quotedName := `"` + name + `"`
+
+	out, err := runZowe(ctx, "zos-files", "list", "data-set", quotedName, "--rfj")
+	if err != nil {
+		return false, err
+	}
+
+	var res listRes
+	if err = json.Unmarshal(out, &res); err != nil {
+		return false, err
+	}
+
+	if res.Data.APIResponse.ReturnedRows > 0 {
+		zoweLogger.Debug().Msgf("✔ %s exists", name)
+		return true, nil
+	}
+
+	return false, nil
+}
+
 // EnsurePDSExists checks if a partitioned data set exists and creates it if not.
 func EnsurePDSExists(ctx *context.ExecutionContext, name string) error {
 	zoweLogger := log.With().
