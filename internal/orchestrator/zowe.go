@@ -35,6 +35,16 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 		return fmt.Errorf("failed to create deck directory %s: %w", deckDir, err)
 	}
 
+	// Check if loadlib exists
+	// Assumes ValidateGraceConfig is run and loadlib field is valid and populated
+	exists, err := zowe.CheckPDSExists(ctx, ctx.Config.Datasets.LoadLib)
+	if err != nil {
+		return fmt.Errorf("failed to check if loadlib %q exists: %w", ctx.Config.Datasets.LoadLib, err)
+	}
+	if !exists {
+		return fmt.Errorf("loadlib %q does not exist", ctx.Config.Datasets.LoadLib)
+	}
+
 	for _, job := range graceCfg.Jobs {
 		if len(ctx.SubmitOnly) > 0 && !slices.Contains(ctx.SubmitOnly, job.Name) {
 			log.Debug().Str("job_name", job.Name).Msg("Skipping deck/upload due to --only filter")
@@ -45,11 +55,14 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 		jclFileName := fmt.Sprintf("%s.jcl", job.Name)
 		jclOutPath := filepath.Join(deckDir, jclFileName)
 
+		// Initialize contextual logger
+		deckJobLogger := log.With().Str("job_name", job.Name).Logger()
+
 		fmt.Println() // Newline
 
 		// --- Compile JCL (conditional) ---
 		if !noCompile {
-			log.Info().Str("job_name", job.Name).Msgf("Generating JCL -> %s", jclOutPath)
+			deckJobLogger.Info().Msgf("Generating JCL -> %s", jclOutPath)
 
 			var templatePath string
 
@@ -80,9 +93,9 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			if err != nil {
 				return fmt.Errorf("failed to write %s: %w", jclFileName, err)
 			}
-			log.Info().Str("job_name", job.Name).Msgf("✓ JCL generated at %s", jclOutPath)
+			deckJobLogger.Info().Msgf("✓ JCL generated at %s", jclOutPath)
 		} else {
-			log.Info().Str("job_name", job.Name).Msgf("Skipping JCL compilation (--no-compile).")
+			deckJobLogger.Info().Msgf("Skipping JCL compilation (--no-compile).")
 		}
 
 		// --- Upload files (conditional) ---
@@ -112,8 +125,8 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 
 			log.Info().Str("job", job.Name).Msg("✓ JCL deck uploaded")
 			if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
-				log.Debug().Str("job_name", job.Name).Msgf("  From: %s", jclUploadRes.Data.APIResponse[0].From)
-				log.Debug().Str("job_name", job.Name).Msgf("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
+				deckJobLogger.Debug().Msgf("  From: %s", jclUploadRes.Data.APIResponse[0].From)
+				deckJobLogger.Debug().Msgf("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
 			}
 
 			// --- Upload COBOL source ---
@@ -135,14 +148,14 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 
 				log.Info().Str("job_name", job.Name).Msgf("✓ COBOL data set %s submitted", job.Source)
 				if cobolUploadRes != nil && cobolUploadRes.Data.Success && len(cobolUploadRes.Data.APIResponse) > 0 {
-					log.Debug().Str("job_name", job.Name).Msgf("  From: %s", jclUploadRes.Data.APIResponse[0].From)
-					log.Debug().Str("job_name", job.Name).Msgf("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
+					deckJobLogger.Debug().Msgf("  From: %s", jclUploadRes.Data.APIResponse[0].From)
+					deckJobLogger.Debug().Msgf("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
 				}
 			} else {
-				log.Info().Str("job_name", job.Name).Msg("Skipping COBOL source upload (no source defined).")
+				deckJobLogger.Info().Msg("Skipping COBOL source upload (no source defined).")
 			}
 		} else {
-			log.Info().Str("job_name", job.Name).Msg("Skipping uploads (--no-upload).")
+			deckJobLogger.Info().Msg("Skipping uploads (--no-upload).")
 		}
 
 	}
@@ -151,7 +164,8 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 
 // Run implements the DAG job execution and monitoring logic using the executor.
 func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecutionRecord, error) {
-	workflowIdStr := ctx.WorkflowId.String()
+	// Configure contextual logger
+	runLogger := log.With().Str("workflow_id", ctx.WorkflowId.String()).Logger()
 
 	// --- Pre-Loop Validations / Setup ---
 
@@ -165,7 +179,7 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 	if hlq == "" {
 		return nil, fmt.Errorf("orchestration failed: invalid HLQ derived from datasets.jcl (%q). Ensure the field exists and is valid in grace.yml", ctx.Config.Datasets.JCL)
 	}
-	log.Debug().Str("workflow", workflowIdStr).Msgf("Using HLQ: %s for initiator info", hlq)
+	runLogger.Debug().Msgf("Using HLQ: %s for initiator info", hlq)
 
 	// --- Build job graph ---
 
@@ -178,31 +192,31 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 
 	// Handle case where config is valid but has no jobs
 	if len(jobGraph) == 0 {
-		log.Info().Str("workflow", workflowIdStr).Msg("No jobs defined in the configuration. Workflow finished.")
+		runLogger.Info().Msg("No jobs defined in the configuration. Workflow finished.")
 		return []models.JobExecutionRecord{}, nil
 	}
-	log.Debug().Str("workflow", workflowIdStr).Msgf("Job graph built successfully with %d nodes.", len(jobGraph))
+	runLogger.Debug().Msgf("Job graph built successfully with %d nodes.", len(jobGraph))
 
 	// --- Create and run executor ---
 
 	// We pass the max concurrency value from grace.yml here
 	exec := executor.NewExecutor(ctx, jobGraph, ctx.Config.Config.Concurrency)
 
-	log.Debug().Str("workflow", workflowIdStr).Msg("Invoking executor...")
+	runLogger.Debug().Msg("Invoking executor...")
 
 	jobExecutionRecords, execErr := exec.ExecuteAndWait()
 	// NOTE: execErr represents errors from the executor's own logic (e.g. deadlock)
 	// not individual job failures. Those are captured in the jobExecutionRecords.
 
 	if execErr != nil {
-		log.Error().Str("workflow", workflowIdStr).Msgf("Executor encountered an error: %v", execErr)
+		runLogger.Error().Err(execErr).Msgf("Executor encountered an error")
 
 		// Return the records collected so far anyways so that the caller can still generate
 		// a partial summary
 		return jobExecutionRecords, fmt.Errorf("DAG execution failed: %w", execErr)
 	}
 
-	log.Info().Str("workflow", workflowIdStr).Msg("✓ Executor finished successfully.")
+	runLogger.Info().Msg("✓ Executor finished successfully.")
 	return jobExecutionRecords, nil
 }
 

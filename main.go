@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/graceinfra/grace/cmd"
 	"github.com/graceinfra/grace/internal/logging"
@@ -47,20 +48,24 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Background Error: Log directory must be provided via --log-dir for internal run.")
 			os.Exit(1)
 		}
+
+		logFilePath = filepath.Join(targetLogDir, "workflow.log")
 	}
 
-	err := logging.SetupLogging(isVerbose, logFilePath)
+	err := logging.ConfigureGlobalLogger(isVerbose, logFilePath)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize logging")
+		// Fallback to basic stderr if logger setup fails
+		fmt.Fprintf(os.Stderr, "FATAL: Failed to initialize logging: %v\n", err)
+		os.Exit(1)
 	}
 
 	// --- Execute command ---
 
 	if isInternalRun {
-		// Execute the background task directly
+		log.Info().Msgf("[Background Startup] Running background workflow %s", targetWorkflowId)
 		cmd.RunBackgroundWorkflow(targetWorkflowId, targetCfgPath, targetLogDir, targetOnlyFilter, isVerbose)
 	} else {
-		// Normal CLI execution
+		log.Info().Msg("Starting Grace CLI command execution")
 		cmd.Execute()
 	}
 }

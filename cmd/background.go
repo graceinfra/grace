@@ -16,6 +16,8 @@ import (
 // RunBackgroundWorkflow is executed when 'grace' is launched with internal flags.
 // It runs the full orchestration logic and logs to files.
 func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter []string, verbose bool) {
+	bgWorkflowLogger := log.With().Str("workflow_id", workflowIdStr).Logger()
+
 	workflowId, err := uuid.Parse(workflowIdStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Background Error: Invalid workflow ID %q: %v\n", workflowIdStr, err)
@@ -33,9 +35,9 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 
 	// --- Configure file logging ---
 
-	log.Info().Str("workflow", workflowIdStr).Msg("Starting execution.")
-	log.Info().Str("workflow", workflowIdStr).Msgf("Using config: %s", configPath)
-	log.Info().Str("workflow", workflowIdStr).Msgf("Using log directory: %s", logDir)
+	bgWorkflowLogger.Info().Msg("Starting execution.")
+	bgWorkflowLogger.Info().Msgf("Using config: %s", configPath)
+	bgWorkflowLogger.Info().Msgf("Using log directory: %s", logDir)
 
 	// --- Load grace.yml ---
 
@@ -57,16 +59,16 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 	// --- Instantiate and run orchestrator ---
 
 	orch := orchestrator.NewZoweOrchestrator()
-	log.Debug().Str("workflow", workflowIdStr).Msg("Invoking DAG executor...")
+	bgWorkflowLogger.Debug().Msg("Invoking DAG executor...")
 	startTimeForSummary := time.Now()
 	jobExecutionRecords, execErr := orch.Run(ctx)
 
 	// --- Process results & write summary
 
 	if execErr != nil {
-		log.Error().Str("workflow", workflowIdStr).Msgf("Orchestration failed: %v", execErr)
+		bgWorkflowLogger.Error().Err(execErr).Msg("Orchestration failed")
 	} else {
-		log.Info().Str("workflow", workflowIdStr).Msg("Orchestration finished. Processing results...")
+		bgWorkflowLogger.Info().Msg("Orchestration finished. Processing results...")
 	}
 
 	// Generate summary regardless of execErr, using potentially partial records
@@ -75,12 +77,12 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 	// Attempt to write summary
 	err = writeSummary(summary, logDir)
 	if err != nil {
-		log.Error().Str("workflow", workflowIdStr).Msgf("Failed to write summary: %v", err)
+		bgWorkflowLogger.Error().Err(err).Msgf("Failed to write summary")
 	} else {
-		log.Info().Str("workflow", workflowIdStr).Msgf("Workflow summary written to %s", filepath.Join(logDir, "summary.json"))
+		bgWorkflowLogger.Info().Msgf("Workflow summary written to %s", filepath.Join(logDir, "summary.json"))
 	}
 
-	log.Info().Str("workflow", workflowIdStr).Msg("Execution finished.")
+	bgWorkflowLogger.Info().Msg("Execution finished.")
 
 	if execErr != nil {
 		os.Exit(1) // Exit with error code if orchestration itself failed

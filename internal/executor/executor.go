@@ -409,7 +409,7 @@ func (e *Executor) executeJob(jobName string) {
 			}
 			jobIdLogger.Info().Msgf("✓ Job completed: Status %s, RC %s", finalResult.Data.Status, retCode)
 		} else {
-			jobIdLogger.Error().Msgf("✓ Job finished with non-OUTPUT status: %s", record.JobID, finalResult.Data.Status)
+			jobIdLogger.Error().Msgf("✓ Job finished with non-OUTPUT status: %s", finalResult.Data.Status)
 			// State remains FAILED
 		}
 	} else {

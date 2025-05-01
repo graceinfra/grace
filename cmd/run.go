@@ -61,24 +61,24 @@ Use '--only' to selectively run specific jobs.`,
 		// --- Instantiate and run orchestrator ---
 
 		orch := orchestrator.NewZoweOrchestrator()
-		log.Info().Str("workflow", workflowId.String()).Msg("Starting workflow run...")
+		log.Info().Str("workflow_id", workflowId.String()).Msg("Starting workflow run...")
 
 		jobExecutionRecords, err := orch.Run(ctx)
 		cobra.CheckErr(err)
 
 		// --- Construct workflow summary ---
 
-		log.Debug().Str("workflow", workflowId.String()).Msg("Generating execution summary...")
+		log.Debug().Str("workflow_id", workflowId.String()).Msg("Generating execution summary...")
 
 		summary := generateExecutionSummary(jobExecutionRecords, workflowId, workflowStartTime, graceCfg, "run", submitOnly)
 
 		// --- Write workflow summary to summary.json ---
 
 		if err = writeSummary(summary, logDir); err != nil {
-			log.Error().Str("workflow", workflowId.String()).Msgf("Failed to write summary.json to %s", logDir)
+			log.Error().Str("workflow_id", workflowId.String()).Msgf("Failed to write summary.json to %s", logDir)
 		}
 
 		fmt.Println() // Newline
-		log.Info().Str("workflow", workflowId.String()).Msgf("✓ Workflow complete, logs saved to: %s", logDir)
+		log.Info().Str("workflow_id", workflowId.String()).Msgf("✓ Workflow complete, logs saved to: %s", logDir)
 	},
 }
