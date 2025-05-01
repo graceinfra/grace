@@ -88,10 +88,6 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 			}
 		}
 
-		if Verbose {
-			bgArgs = append(bgArgs, "--verbose")
-		}
-
 		// --- Create the command for background execution ---
 
 		bgCmd := exec.Command(executablePath, bgArgs...)

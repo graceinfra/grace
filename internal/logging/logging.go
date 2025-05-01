@@ -18,11 +18,7 @@ import (
 // If logFilePath is provided, logs in JSON format to that file.
 func ConfigureGlobalLogger(isVerbose bool, logFilePath string) error {
 	logLevel := zerolog.InfoLevel
-	if isVerbose {
-		logLevel = zerolog.DebugLevel
-	}
 	zerolog.SetGlobalLevel(logLevel)
-	zerolog.TimeFieldFormat = time.RFC3339
 
 	var outputWriter io.Writer
 	isLoggingToFile := false
@@ -41,7 +37,11 @@ func ConfigureGlobalLogger(isVerbose bool, logFilePath string) error {
 		}
 
 		outputWriter = fileHandle
+
+		// Set level to DEBUG regardless of isVerbose flag.
+		// workflow.log file should contain all log levels.
 		globallog.Logger = zerolog.New(outputWriter).With().Timestamp().Logger()
+		logLevel = zerolog.DebugLevel
 	} else {
 		// --- Terminal logging ---
 		outputWriter = zerolog.ConsoleWriter{
@@ -65,12 +65,16 @@ func ConfigureGlobalLogger(isVerbose bool, logFilePath string) error {
 		globallog.Logger = zerolog.New(outputWriter).With().Timestamp().Logger()
 	}
 
+	zerolog.SetGlobalLevel(logLevel)
+	zerolog.TimeFieldFormat = time.RFC3339
+
+	// --- Log confirmation ---
 	if isLoggingToFile {
 		globallog.Info().Msgf("Configured file logging (JSON format) to: %s", logFilePath)
+		globallog.Info().Msgf("File log level set to: %s", logLevel) // Reflects Debug
 	} else {
 		globallog.Info().Msg("Configured console logging.")
-		fmt.Fprintln(os.Stderr, "DEBUG: Console writer active.")
+		globallog.Info().Msgf("Console log level set to: %s", logLevel) // Reflects Info or Debug
 	}
-	globallog.Info().Msgf("Log level set to: %s", logLevel)
 	return nil
 }

@@ -15,7 +15,7 @@ import (
 
 // RunBackgroundWorkflow is executed when 'grace' is launched with internal flags.
 // It runs the full orchestration logic and logs to files.
-func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter []string, verbose bool) {
+func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter []string) {
 	bgWorkflowLogger := log.With().Str("workflow_id", workflowIdStr).Logger()
 
 	workflowId, err := uuid.Parse(workflowIdStr)
