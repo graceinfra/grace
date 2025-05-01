@@ -9,10 +9,12 @@ import (
 
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/log"
+	"github.com/graceinfra/grace/internal/logging"
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/zowe"
 	"github.com/graceinfra/grace/types"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 type JobState string
@@ -52,14 +54,20 @@ type Executor struct {
 	concurrencyChan   chan struct{} // Semaphore to limit concurrency
 	jobCompletionChan chan struct{} // Channel to signal job completion
 	errChan           chan error    // For fatal errors (not currently used) TODO (?)
+	logger            zerolog.Logger
 }
 
 const DefaultConcurrency = 5
 
 func NewExecutor(ctx *context.ExecutionContext, graph map[string]*config.JobNode, concurrency int) *Executor {
+	instanceLogger := log.With().
+		Str("component", "executor").
+		Str("workflow_id", ctx.WorkflowId.String()).
+		Logger()
+
 	if concurrency <= 0 {
 		concurrency = DefaultConcurrency
-		ctx.Logger.Verbose("Using default concurrency: %d", concurrency)
+		instanceLogger.Debug().Msgf("Using default concurrency: %d", concurrency)
 	}
 
 	return &Executor{
@@ -71,11 +79,12 @@ func NewExecutor(ctx *context.ExecutionContext, graph map[string]*config.JobNode
 		concurrencyChan:   make(chan struct{}, concurrency), // Buffered channel acts as a semaphore
 		jobCompletionChan: make(chan struct{}, len(graph)),
 		errChan:           make(chan error, 1),
+		logger:            instanceLogger,
 	}
 }
 
 func (e *Executor) ExecuteAndWait() ([]models.JobExecutionRecord, error) {
-	e.ctx.Logger.Verbose("Initializing DAG execution states...")
+	e.logger.Debug().Msg("Initializing DAG execution states...")
 
 	// --- Initialize all job states ---
 
@@ -86,7 +95,7 @@ func (e *Executor) ExecuteAndWait() ([]models.JobExecutionRecord, error) {
 
 		if len(node.Dependencies) == 0 {
 			e.jobStates[jobName] = StateReady
-			e.ctx.Logger.Verbose("Job %q initial state: %s (no dependencies)", jobName, StateReady)
+			e.logger.Debug().Str("job", jobName).Msgf("Initial state: %s (no dependencies)", StateReady)
 		} else {
 			depNames := make([]string, len(node.Dependencies))
 			validDeps := true
@@ -104,13 +113,13 @@ func (e *Executor) ExecuteAndWait() ([]models.JobExecutionRecord, error) {
 			}
 
 			e.jobStates[jobName] = StatePending
-			e.ctx.Logger.Verbose("Job %q initial state: %s (depends on: %v)", jobName, StatePending, depNames)
+			e.logger.Debug().Str("job", jobName).Msgf("Initial state: %s (depends on: %v)", StatePending, depNames)
 		}
 	}
 
 	e.stateMutex.Unlock()
 
-	e.ctx.Logger.Verbose("Starting DAG execution loop...")
+	e.logger.Debug().Msg("Starting DAG execution loop...")
 
 	// --- Core execution loop ---
 
@@ -128,38 +137,38 @@ func (e *Executor) ExecuteAndWait() ([]models.JobExecutionRecord, error) {
 		launchedCount := e.launchReadyJobs(&activeGoroutines)
 
 		if activeGoroutines == 0 && launchedCount == 0 && !e.allJobsDone() {
-			e.ctx.Logger.Error("deadlock detected or internal scheduling error. No jobs running or ready.")
-			return e.collectFinalResults(), fmt.Errorf("executor deadlick: no jobs running or ready, but not all jobs are finished")
+			e.logger.Error().Msg("Deadlock detected or internal scheduling error. No jobs running or ready.")
+			return e.collectFinalResults(), fmt.Errorf("executor deadlock: no jobs running or ready, but not all jobs are finished")
 		}
 
 		if launchedCount == 0 && activeGoroutines > 0 {
-			e.ctx.Logger.Verbose("Waiting for any running job to complete...")
+			e.logger.Debug().Msg("Waiting for any running job to complete...")
 			select {
 			case <-e.jobCompletionChan:
-				e.ctx.Logger.Verbose("Received job completion signal.")
+				e.logger.Debug().Msg("Received job completion signal.")
 				activeGoroutines--
 			case err := <-e.errChan:
-				e.ctx.Logger.Error("Fatal error received from job goroutine: %v", err)
+				e.logger.Error().Err(err).Msg("Fatal error received from job goroutine")
 				// TODO: Implement cancellation logic here? (signal other goroutines to stop)
 				return e.collectFinalResults(), err
 			case <-time.After(60 * time.Second):
-				e.ctx.Logger.Warn("Timeout waiting for job completion signal.")
+				e.logger.Warn().Msg("Timeout waiting for job completion signal.")
 			}
 		}
 	}
 
 	// --- Wait for any remaining jobs and collect results ---
 
-	e.ctx.Logger.Verbose("Waiting for final job completions...")
+	e.logger.Debug().Msg("Waiting for final job completions...")
 	e.wg.Wait()
-	e.ctx.Logger.Verbose("All job goroutines completed.")
+	e.logger.Debug().Msg("All job goroutines completed.")
 
 	// --- Handle skipped jobs and finalize results
 
 	e.markSkippedJobs()
 	finalResults := e.collectFinalResults()
 
-	e.ctx.Logger.Verbose("Collected %d final job execution records.", len(finalResults))
+	e.logger.Debug().Msgf("Collected %d final job execution records.", len(finalResults))
 
 	// TODO: Error reporting - did the executor itself fail?
 	return finalResults, nil
@@ -176,14 +185,19 @@ func (e *Executor) getJobState(jobName string) JobState {
 func (e *Executor) setJobState(jobName string, state JobState) {
 	e.stateMutex.Lock()
 	defer e.stateMutex.Unlock()
+
 	e.jobStates[jobName] = state
-	e.ctx.Logger.Verbose("Job %q state changed to %s", jobName, state)
+
+	e.logger.Debug().
+		Str("job_name", jobName).
+		Msgf("State changed to %s", state)
 }
 
 // Helper to add result safely
 func (e *Executor) addResult(jobName string, record *models.JobExecutionRecord) {
 	e.resultsMutex.Lock()
 	defer e.resultsMutex.Unlock()
+
 	e.results[jobName] = record
 }
 
@@ -219,7 +233,7 @@ func (e *Executor) checkAndReadyJobs() {
 					depsMet = false
 
 					if depState == StateFailed || depState == StateSkipped {
-						e.ctx.Logger.Verbose("Skipping job %q because dependency %q failed or was skipped.", jobName, depNode.Job.Name)
+						e.logger.Debug().Str("job_name", jobName).Msgf("Skipping job because dependency %q failed or was skipped.", depNode.Job.Name)
 						e.jobStates[jobName] = StateSkipped
 						depsMet = false
 						break // No need to check other dependencies if one failed/skipped
@@ -231,7 +245,7 @@ func (e *Executor) checkAndReadyJobs() {
 
 			if depsMet && e.jobStates[jobName] == StatePending {
 				e.jobStates[jobName] = StateReady
-				e.ctx.Logger.Verbose("Job %q is now READY (dependencies met).", jobName)
+				e.logger.Debug().Str("job_name", jobName).Msg("Job is now READY (dependencies met).")
 			} else if !depsMet && e.jobStates[jobName] == StatePending {
 				// If deps are not met and state didn't change to SKIPPED, ensure it's WAITING_DEPS or keep PENDING
 				// e.jobStates[jobName] = StateWaitingDeps // Optional explicit state but we can leave it as PENDING for now
@@ -255,13 +269,14 @@ func (e *Executor) launchReadyJobs(activeGoroutines *int) int {
 	e.stateMutex.RUnlock()
 
 	if len(readyJobs) > 0 {
-		e.ctx.Logger.Verbose("Found %d READY jobs: %v", len(readyJobs), readyJobs)
+		e.logger.Debug().Msgf("Found %d READY jobs: %v", len(readyJobs), readyJobs)
 	}
 
 	for _, jobName := range readyJobs {
-		e.ctx.Logger.Verbose("Attempting to acquire concurrency slot for job %q...", jobName)
+		jobLogger := e.logger.With().Str("job_name", jobName).Logger()
+		jobLogger.Debug().Msg("Attempting to acquire concurrency slot...")
 		e.concurrencyChan <- struct{}{}
-		e.ctx.Logger.Verbose("Concurrency slot acquired for job %q.", jobName)
+		jobLogger.Debug().Msg("Concurrency slot acquired.")
 
 		// Re-check state after acquiring semaphore, before launching goroutine
 		e.stateMutex.Lock()
@@ -270,7 +285,7 @@ func (e *Executor) launchReadyJobs(activeGoroutines *int) int {
 			e.stateMutex.Unlock()
 
 			// State changed while waiting for semaphore (e.g. marked SKIPPED)
-			e.ctx.Logger.Verbose("Job %q changed to %s before launch, releasing slot.", jobName, currentState)
+			jobLogger.Debug().Msgf("Job state changed to %s before launch, releasing slot.", currentState)
 			<-e.concurrencyChan
 			continue
 		}
@@ -278,7 +293,7 @@ func (e *Executor) launchReadyJobs(activeGoroutines *int) int {
 		e.jobStates[jobName] = StateSubmitting
 		e.stateMutex.Unlock()
 
-		e.ctx.Logger.Info("🚀 Launching job %q", jobName)
+		jobLogger.Info().Msg("🚀 Launching job")
 
 		*activeGoroutines++
 
@@ -293,11 +308,13 @@ func (e *Executor) launchReadyJobs(activeGoroutines *int) int {
 
 // executeJob is the goroutine function that handles the lifecycle of a single job
 func (e *Executor) executeJob(jobName string) {
+	jobLogger := e.logger.With().Str("job_name", jobName).Logger()
+
 	defer e.wg.Done()                      // Decrement WaitGroup counter when goroutine finishes
 	defer func() { <-e.concurrencyChan }() // Release semaphore when goroutine finishes
 	defer func() {
 		e.jobCompletionChan <- struct{}{}
-		e.ctx.Logger.Verbose("Job %q signaled completion.", jobName)
+		jobLogger.Debug().Msg("Job signaled completion.")
 	}()
 
 	node := e.jobGraph[jobName]
@@ -332,13 +349,13 @@ func (e *Executor) executeJob(jobName string) {
 
 	// --- Submit job ---
 
-	e.ctx.Logger.Info("Submitting job %q...", jobName)
+	jobLogger.Info().Msg("Submitting job ...")
 
 	submitResult, submitErr := zowe.SubmitJob(e.ctx, job)
 	record.SubmitResponse = submitResult
 
 	if submitErr != nil {
-		e.ctx.Logger.Error("⚠️ Job %s submission failed: %v", record.JobName, submitErr)
+		jobLogger.Error().Err(submitErr).Msgf("Job submission failed")
 
 		e.setJobState(jobName, StateFailed)
 
@@ -348,7 +365,13 @@ func (e *Executor) executeJob(jobName string) {
 
 		e.addResult(jobName, record)
 
-		_ = log.SaveJobExecutionRecord(e.ctx.LogDir, *record)
+		err := logging.SaveJobExecutionRecord(e.ctx.LogDir, *record)
+		if err != nil {
+			jobLogger.Error().
+				Err(err).
+				Str("log_dir", e.ctx.LogDir).
+				Msg("Failed to save job execution record")
+		}
 
 		return
 	}
@@ -356,12 +379,16 @@ func (e *Executor) executeJob(jobName string) {
 	// --- Submission succeeded ---
 
 	record.JobID = submitResult.Data.JobID
-	e.ctx.Logger.Info("✓ Job %q submitted (ID: %s). Waiting for completion...", jobName, record.JobID)
+
+	// Initialize a new logger with job_id
+	jobIdLogger := jobLogger.With().Str("job_id", record.JobID).Logger()
+
+	jobIdLogger.Info().Msgf("✓ Job submitted (ID: %s). Waiting for completion...", record.JobID)
 	e.setJobState(jobName, StateRunning)
 
 	// --- Wait for completion ---
 
-	finalResult, waitErr := zowe.WaitForJobCompletion(e.ctx, record.JobID)
+	finalResult, waitErr := zowe.WaitForJobCompletion(e.ctx, record.JobID, jobName)
 	record.FinalResponse = finalResult
 
 	finishTime := time.Now()
@@ -372,7 +399,7 @@ func (e *Executor) executeJob(jobName string) {
 
 	finalState := StateFailed
 	if waitErr != nil {
-		e.ctx.Logger.Error("⚠️ Failed to getfinal status for job %q (%s): %v", jobName, record.JobID, waitErr)
+		jobIdLogger.Error().Err(waitErr).Msg("Failed to get final status!")
 	} else if finalResult != nil && finalResult.Data != nil {
 		if finalResult.Data.Status == "OUTPUT" {
 			finalState = StateSucceeded
@@ -380,22 +407,28 @@ func (e *Executor) executeJob(jobName string) {
 			if finalResult.Data.RetCode != nil {
 				retCode = *finalResult.Data.RetCode
 			}
-			e.ctx.Logger.Info("✓ Job %s (%s) completed: Status %s, RC %s", record.JobName, record.JobID, finalResult.Data.Status, retCode)
+			jobIdLogger.Info().Msgf("✓ Job completed: Status %s, RC %s", finalResult.Data.Status, retCode)
 		} else {
-			e.ctx.Logger.Error("✓ Job %q (%s) finished with non-OUTPUT status: %s", jobName, record.JobID, finalResult.Data.Status)
+			jobIdLogger.Error().Msgf("✓ Job finished with non-OUTPUT status: %s", record.JobID, finalResult.Data.Status)
 			// State remains FAILED
 		}
 	} else {
-		e.ctx.Logger.Error("⚠️ Polling for job %s (%s) finished, but final status data is incomplete.", record.JobName, record.JobID)
+		jobIdLogger.Error().Msg("Polling for job finished, but final status data is incomplete.")
 	}
 
 	// --- Final update ---
 
 	e.setJobState(jobName, finalState)
 	e.addResult(jobName, record)
-	_ = log.SaveJobExecutionRecord(e.ctx.LogDir, *record)
+	err := logging.SaveJobExecutionRecord(e.ctx.LogDir, *record)
+	if err != nil {
+		jobIdLogger.Error().
+			Err(err).
+			Str("log_dir", e.ctx.LogDir).
+			Msg("Failed to save job execution record")
+	}
 
-	e.ctx.Logger.Info("💫 Finished job %q execution. Final state: %s", jobName, finalState)
+	jobIdLogger.Info().Msgf("✅ Finished job execution. Final state: %s", finalState)
 }
 
 // markSkippedJobs iterates through jobs that are still PENDING after the main loop
@@ -424,7 +457,7 @@ func (e *Executor) markSkippedJobs() {
 
 				if shouldSkip {
 					e.jobStates[jobName] = StateSkipped
-					e.ctx.Logger.Info("Marking job %q as %s due to upstream failure/skip.", jobName, StateSkipped)
+					e.logger.Info().Str("job_name", jobName).Msgf("Marking job as %s due to upstream failure/skip.", StateSkipped)
 					madeChanges = true
 				}
 			}
@@ -446,7 +479,7 @@ func (e *Executor) collectFinalResults() []models.JobExecutionRecord {
 			state := e.getJobState(jobName)
 
 			if state == StateSkipped {
-				e.ctx.Logger.Verbose("Creating SKIPPED record for job %q", jobName)
+				e.logger.Debug().Str("job_name", jobName).Msg("Creating SKIPPED record")
 
 				node := e.jobGraph[jobName]
 
@@ -473,7 +506,7 @@ func (e *Executor) collectFinalResults() []models.JobExecutionRecord {
 
 			} else if state != StateSucceeded && state != StateFailed {
 				// Shouldn't happen if loop/wait logic is correct but log this in case
-				e.ctx.Logger.Error("⚠️ Job %q finished in unexpected non-terminal state: %s", jobName, state)
+				e.logger.Error().Str("job_name", jobName).Msgf("Job finished in unexpected non-terminal state: %s", state)
 			}
 		}
 	}

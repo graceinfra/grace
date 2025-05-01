@@ -11,6 +11,7 @@ import (
 
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/types"
+	"github.com/rs/zerolog/log"
 )
 
 // SubmitJob submits a job via Zowe based on a dataset member.
@@ -92,14 +93,19 @@ func GetJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, 
 
 // pollJobStatus checks job status repeatedly until a terminal state is reached.
 // Internal helper for WaitForJobCompletion.
-func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, error) {
-	// Spinner is managed WITHIN WaitForJobCompletion's loop
+func pollJobStatus(ctx *context.ExecutionContext, jobId, jobName string) (*types.ZoweRfj, error) {
+	logger := log.With().
+		Str("workflow_id", ctx.WorkflowId.String()).
+		Str("job_name", jobName).
+		Str("job_id", jobId).
+		Logger()
+
 	for {
 		time.Sleep(2 * time.Second)
 
 		statusResult, err := GetJobStatus(ctx, jobId)
 		if err != nil {
-			ctx.Logger.Verbose("Polling error for %s: %v", jobId, err)
+			logger.Debug().Err(err).Msg("Polling error")
 			// Decide if we should retry or fail hard. For now, let's retry a few times implicitly.
 			// A more robust implementation would have explicit retry counts/backoff.
 			// If Zowe itself fails repeatedly, we should probably bail out.
@@ -107,16 +113,11 @@ func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj,
 			return statusResult, fmt.Errorf("failed to get job status during polling for %s: %w", jobId, err)
 		}
 
-		// Log current status for verbose users
 		statusText := "UNKNOWN"
 		if statusResult != nil && statusResult.Data != nil {
 			statusText = statusResult.Data.Status
 		}
-		spinnerText := fmt.Sprintf("Polling %s ... (status: %s)", jobId, statusText) // Removed \n
-		if ctx.Logger.Spinner != nil {
-			ctx.Logger.Spinner.Suffix = " " + spinnerText
-		}
-
+		logger.Info().Msgf("Polling ... (status: %s)", statusText)
 		// Check for terminal states (Success/Failure)
 		if statusResult.Data != nil {
 			switch statusResult.Data.Status {
@@ -124,11 +125,11 @@ func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj,
 				return statusResult, nil
 			case "INPUT", "ACTIVE", "WAITING":
 			default:
-				ctx.Logger.Info("⚠️ Job %s polling: Received unknown status '%s'", jobId, statusResult.Data.Status)
+				logger.Info().Msgf("Received unknown status '%s'", statusResult.Data.Status)
 			}
 		} else {
 			// Should not happen if GetJobStatus error handling is correct, but safeguard
-			ctx.Logger.Error("⚠️ Polling for job %s: GetJobStatus returned success but no data", jobId)
+			logger.Error().Msg("Polling: GetJobStatus returned success but no data")
 			// Continue polling cautiously? Or return error?
 			return statusResult, fmt.Errorf("polling for job %s received inconsistent status (success but no data)", jobId)
 		}
@@ -138,8 +139,8 @@ func pollJobStatus(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj,
 }
 
 // WaitForJobCompletion polls a job until it reaches a terminal state.
-func WaitForJobCompletion(ctx *context.ExecutionContext, jobId string) (*types.ZoweRfj, error) {
-	finalStatus, err := pollJobStatus(ctx, jobId)
+func WaitForJobCompletion(ctx *context.ExecutionContext, jobId, jobName string) (*types.ZoweRfj, error) {
+	finalStatus, err := pollJobStatus(ctx, jobId, jobName)
 	if err != nil {
 		// Error occurred during polling (e.g., repeated Zowe failures)
 		// finalStatus might contain the last known info or error details from GetJobStatus

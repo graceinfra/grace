@@ -5,9 +5,8 @@ import (
 
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/log"
 	"github.com/graceinfra/grace/internal/orchestrator"
-	"github.com/graceinfra/grace/types"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
@@ -36,39 +35,27 @@ Deck supports templated compilation, custom templates, and selective job targeti
 
 Use deck to prepare and stage mainframe batch jobs before invoking [grace run] or [grace submit].`,
 	Run: func(cmd *cobra.Command, args []string) {
-		var outputStyle types.OutputStyle
-		switch {
-		case Verbose:
-			outputStyle = types.StyleHumanVerbose
-		default:
-			outputStyle = types.StyleHuman
-		}
-
 		// Load and validate grace.yml
 		graceCfg, err := config.LoadGraceConfig("grace.yml")
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to load grace configuration: %w", err))
 		}
 
-		logger := log.NewLogger(outputStyle)
-
 		ctx := &context.ExecutionContext{
-			Config:      graceCfg,
-			Logger:      logger,
-			OutputStyle: outputStyle,
-			SubmitOnly:  submitOnly,
-			GraceCmd:    "deck",
+			Config:     graceCfg,
+			SubmitOnly: submitOnly,
+			GraceCmd:   "deck",
 		}
 
 		// Instantiate orchestrator
 		orch := orchestrator.NewZoweOrchestrator()
 
-		logger.Info("Starting deck and upload process...")
+		log.Info().Msg("Starting deck and upload process...")
 
 		err = orch.DeckAndUpload(ctx, noCompile, noUpload)
 		cobra.CheckErr(err)
 
 		fmt.Println() // Newline
-		logger.Info("✓ Deck and upload process completed successfully.")
+		log.Info().Msg("✓ Deck and upload process completed successfully.")
 	},
 }

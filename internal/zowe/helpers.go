@@ -11,6 +11,7 @@ import (
 
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/types"
+	"github.com/rs/zerolog/log"
 )
 
 // runZowe invokes `zowe <args...>` and returns the stdout bytes and potentially
@@ -28,14 +29,19 @@ import (
 // Stderr from the Zowe command is logged verbosely if not empty, but not
 // typically included in the returned error unless the process execution fails.
 func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
+	zoweLogger := log.With().
+		Str("component", "zowe_cli").
+		Str("workflow_id", ctx.WorkflowId.String()).
+		Logger()
+
+	zoweLogger.Debug().Strs("args", args).Msg("Running zowe command")
+
 	cmd := exec.Command("zowe", args...)
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf // Capture stdout
 	cmd.Stderr = &errBuf // Capture stderr
 	cmd.Stdin = os.Stdin
-
-	ctx.Logger.Verbose("Running: zowe %v", strings.Join(args, " "))
 
 	err := cmd.Run()
 
@@ -45,11 +51,17 @@ func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
 
 	// Log stderr content if verbose logging is enabled and stderr is not empty
 	if stderrString != "" {
-		ctx.Logger.Verbose("stderr from 'zowe %s':\n%s", strings.Join(args, " "), stderrString)
+		zoweLogger.Debug().Strs("args", args).Str("stderr", stderrString).Msg("Zowe command stderr output")
 	}
 
 	// Handle process execution errors (e.g., command not found, non-zero exit code)
 	if err != nil {
+		zoweLogger.Error().
+			Err(err).
+			Strs("args", args).
+			Str("stderr", stderrString).
+			Msg("Zowe process execution failed")
+
 		// Process execution failed. Return stdout (it might still contain partial JSON/info)
 		// and a comprehensive error including the original error and stderr.
 		return stdoutBytes, fmt.Errorf("zowe process execution failed for 'zowe %s': %w\nstderr:\n%s",
@@ -105,9 +117,8 @@ func UploadFileToDataset(ctx *context.ExecutionContext, path, member string) (*u
 	//
 	// We do this because there is no easy way to simply overwrite a data set if it exists,
 	// so we delete and reupload to maintain idempotency.
-	quotedMember := `"` + member + `"`
-	ctx.Logger.Verbose("Running: zowe zos-files delete data-set %s -f --rfj", quotedMember)
 
+	quotedMember := `"` + member + `"`
 	var silencedBuf bytes.Buffer
 	cmd := exec.Command("zowe", "zos-files", "delete", "data-set", quotedMember, "-f", "--rfj")
 	cmd.Stdout = &silencedBuf
@@ -145,6 +156,11 @@ type listRes struct {
 
 // EnsurePDSExists checks if a partitioned data set exists and creates it if not.
 func EnsurePDSExists(ctx *context.ExecutionContext, name string) error {
+	zoweLogger := log.With().
+		Str("component", "zowe_cli").
+		Str("workflow_id", ctx.WorkflowId.String()).
+		Logger()
+
 	quotedName := `"` + name + `"`
 
 	out, err := runZowe(ctx, "zos-files", "list", "data-set", quotedName, "--rfj")
@@ -158,11 +174,11 @@ func EnsurePDSExists(ctx *context.ExecutionContext, name string) error {
 	}
 
 	if res.Data.APIResponse.ReturnedRows > 0 {
-		ctx.Logger.Verbose("%s already exists", name)
+		zoweLogger.Debug().Msgf("%s already exists", name)
 		return nil
 	}
 
-	ctx.Logger.Info("Allocating PDS %s ...", name)
+	zoweLogger.Info().Msgf("Allocating PDS %s ...", name)
 
 	raw, err := runZowe(ctx, "zos-files", "create", "data-set-partitioned", name, "--rfj")
 	if err != nil {
@@ -178,12 +194,17 @@ func EnsurePDSExists(ctx *context.ExecutionContext, name string) error {
 		return fmt.Errorf("partitioned data set allocation failed: %s", allocRes.Error.Msg)
 	}
 
-	ctx.Logger.Info("Successfully allocated PDS %s", name)
+	zoweLogger.Info().Msgf("Successfully allocated PDS %s", name)
 	return nil
 }
 
 // EnsureSDSExists checks if a sequential data set exists and creates it if not.
 func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
+	zoweLogger := log.With().
+		Str("component", "zowe_cli").
+		Str("workflow_id", ctx.WorkflowId.String()).
+		Logger()
+
 	quotedName := `"` + name + `"`
 
 	out, err := runZowe(ctx, "zos-files", "list", "data-set", quotedName, "--rfj")
@@ -197,11 +218,11 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 	}
 
 	if res.Data.APIResponse.ReturnedRows > 0 {
-		ctx.Logger.Verbose("%s already exists", name)
+		zoweLogger.Debug().Msgf("%s already exists", name)
 		return nil
 	}
 
-	ctx.Logger.Info("Allocating SDS %s ...", name)
+	zoweLogger.Info().Msgf("Allocating SDS %s ...", name)
 
 	raw, err := runZowe(ctx,
 		"zos-files", "create", "data-set-sequential", name, "--rfj")
@@ -218,7 +239,7 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 		return fmt.Errorf("sequential data set allocation failed: %s", allocRes.Error.Msg)
 	}
 
-	ctx.Logger.Info("Successfully allocated PDS %s", name)
+	zoweLogger.Info().Msgf("Successfully allocated PDS %s", name)
 
 	return nil
 }

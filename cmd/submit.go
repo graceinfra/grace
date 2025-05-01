@@ -10,15 +10,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/graceinfra/grace/internal/config"
-	"github.com/graceinfra/grace/internal/log"
-	"github.com/graceinfra/grace/types"
+	"github.com/graceinfra/grace/internal/logging"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
 func init() {
 	rootCmd.AddCommand(submitCmd)
 
-	submitCmd.Flags().BoolVar(&wantJSON, "json", false, "Return structured JSON data about each job")
 	submitCmd.Flags().StringSliceVar(&submitOnly, "only", nil, "Submit only specified job(s)")
 }
 
@@ -37,13 +36,6 @@ check the log files directly to monitor progress.
 
 Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		outputStyle := types.StyleHuman
-		if Verbose {
-			outputStyle = types.StyleHumanVerbose
-		}
-
-		logger := log.NewLogger(outputStyle)
-
 		// --- Load and validate grace.yml ---
 
 		configPath := "grace.yml"
@@ -51,25 +43,25 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to load/validate %q: %w", configPath, err))
 		}
-		logger.Info("✓ Configuration %q loaded and validated.", configPath)
+		log.Info().Msgf("✓ Configuration %q loaded and validated.", configPath)
 
 		// --- Prepare for background execution ---
 
 		workflowId := uuid.New()
 		workflowStartTime := time.Now()
 
-		logDir, err := log.CreateLogDir(workflowId, workflowStartTime, "submit")
+		logDir, err := logging.CreateLogDir(workflowId, workflowStartTime, "submit")
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to create log directory for workflow %s: %w", workflowId.String(), err))
 		}
-		logger.Info("Logs for workflow %s will be stored in: %s", workflowId.String(), logDir)
+		log.Info().Str("workflow", workflowId.String()).Msgf("Logs for will be stored in: %s", logDir)
 
 		// Find the currently running grace executable
 		executablePath, err := os.Executable()
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to determine grace executable path: %w", err))
 		}
-		logger.Verbose("Found grace executable at: %s", executablePath)
+		log.Debug().Str("workflow", workflowId.String()).Msgf("Found grace executable at: %s", executablePath)
 
 		// Get absolute path to grace.yml for the background process
 		absConfigPath, err := filepath.Abs(configPath)
@@ -114,7 +106,7 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 		}
 		// TODO: add //go:build windows section here later for Windows detachment flags
 
-		logger.Info("Launching background process for workflow %s ...", workflowId.String())
+		log.Info().Str("workflow", workflowId.String()).Msg("Launching background process...")
 
 		// --- Start the background process ---
 
@@ -123,8 +115,8 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 			cobra.CheckErr(fmt.Errorf("failed to start background Grace process: %w", err))
 		}
 
-		logger.Info("✓ Workflow %s submitted successfully.", workflowId.String())
-		logger.Info("  Logs will be written to: %s", logDir)
-		logger.Info("  Use 'grace status %s' or 'grace dash' to check progress.", workflowId.String())
+		log.Info().Str("workflow", workflowId.String()).Msg("✓ Workflow submitted successfully.")
+		log.Info().Str("workflow", workflowId.String()).Msgf("  Logs will be written to: %s", logDir)
+		log.Info().Str("workflow", workflowId.String()).Msgf("  Use 'grace status %s' or 'grace dash' to check progress.", workflowId.String())
 	},
 }

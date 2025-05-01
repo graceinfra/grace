@@ -9,9 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/log"
 	"github.com/graceinfra/grace/internal/orchestrator"
-	"github.com/graceinfra/grace/types"
+	"github.com/rs/zerolog/log"
 )
 
 // RunBackgroundWorkflow is executed when 'grace' is launched with internal flags.
@@ -34,53 +33,40 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 
 	// --- Configure file logging ---
 
-	// IMPORTANT: TODO
-	// Need to refactor logger to provide a NewFileLogger that logs to a file
-
-	// Placeholder using existing logger (output will just be lost for now)
-
-	outputStyle := types.StyleHuman
-	if verbose {
-		outputStyle = types.StyleHumanVerbose
-	}
-
-	logger := log.NewLogger(outputStyle)
-	logger.Info("[Background:%s] Starting execution.", workflowIdStr)
-	logger.Info("[Background:%s] Using config: %s", workflowIdStr, configPath)
-	logger.Info("[Background:%s] Using log directory: %s", workflowIdStr, logDir)
+	log.Info().Str("workflow", workflowIdStr).Msg("Starting execution.")
+	log.Info().Str("workflow", workflowIdStr).Msgf("Using config: %s", configPath)
+	log.Info().Str("workflow", workflowIdStr).Msgf("Using log directory: %s", logDir)
 
 	// --- Load grace.yml ---
 
 	graceCfg, err := config.LoadGraceConfig(configPath)
 	if err != nil {
-		logger.Error("[Background:%s] Failed to load configuration: %v", workflowIdStr, err)
+		log.Error().Str("workflow", workflowIdStr).Msgf("Failed to load configuration: %v", err)
 		os.Exit(1)
 	}
 
 	// --- Create context ---
 	ctx := &context.ExecutionContext{
-		WorkflowId:  workflowId,
-		Config:      graceCfg,
-		Logger:      logger,
-		LogDir:      logDir,
-		OutputStyle: outputStyle,
-		SubmitOnly:  onlyFilter,
-		GraceCmd:    "submit-bg",
+		WorkflowId: workflowId,
+		Config:     graceCfg,
+		LogDir:     logDir,
+		SubmitOnly: onlyFilter,
+		GraceCmd:   "submit-bg",
 	}
 
 	// --- Instantiate and run orchestrator ---
 
 	orch := orchestrator.NewZoweOrchestrator()
-	logger.Info("[Background:%s] Invoking DAG executor...", workflowIdStr)
+	log.Debug().Str("workflow", workflowIdStr).Msg("Invoking DAG executor...")
 	startTimeForSummary := time.Now()
 	jobExecutionRecords, execErr := orch.Run(ctx)
 
 	// --- Process results & write summary
 
 	if execErr != nil {
-		logger.Error("[Background:%s] Orchestration failed: %v", workflowIdStr, execErr)
+		log.Error().Str("workflow", workflowIdStr).Msgf("Orchestration failed: %v", execErr)
 	} else {
-		logger.Verbose("[Background:%s] Orchestration finished. Processing results...", workflowIdStr)
+		log.Info().Str("workflow", workflowIdStr).Msg("Orchestration finished. Processing results...")
 	}
 
 	// Generate summary regardless of execErr, using potentially partial records
@@ -89,12 +75,12 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 	// Attempt to write summary
 	err = writeSummary(summary, logDir)
 	if err != nil {
-		logger.Error("[Background:%s] Failed to write summary: %v", workflowIdStr, err)
+		log.Error().Str("workflow", workflowIdStr).Msgf("Failed to write summary: %v", err)
 	} else {
-		logger.Info("[Background:%s] Workflow summary written to %s", workflowIdStr, filepath.Join(logDir, "summary.json"))
+		log.Info().Str("workflow", workflowIdStr).Msgf("Workflow summary written to %s", filepath.Join(logDir, "summary.json"))
 	}
 
-	logger.Info("[Background:%s] Execution finished.", workflowIdStr)
+	log.Info().Str("workflow", workflowIdStr).Msg("Execution finished.")
 
 	if execErr != nil {
 		os.Exit(1) // Exit with error code if orchestration itself failed

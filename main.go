@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/graceinfra/grace/cmd"
+	"github.com/graceinfra/grace/internal/logging"
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
@@ -12,7 +15,7 @@ func main() {
 	targetWorkflowId := ""
 	targetCfgPath := ""
 	targetOnlyFilter := []string{}
-	logDir := ""
+	targetLogDir := ""
 	isVerbose := false
 
 	for i, arg := range os.Args {
@@ -30,16 +33,32 @@ func main() {
 			targetOnlyFilter = append(targetOnlyFilter, os.Args[i+1])
 		}
 		if arg == "--log-dir" && i+1 < len(os.Args) {
-			logDir = os.Args[i+1]
+			targetLogDir = os.Args[i+1]
 		}
 		if arg == "--verbose" || arg == "-v" {
 			isVerbose = true
 		}
 	}
 
+	logFilePath := "" // Default to terminal logging
+
+	if isInternalRun {
+		if targetLogDir == "" {
+			fmt.Fprintln(os.Stderr, "Background Error: Log directory must be provided via --log-dir for internal run.")
+			os.Exit(1)
+		}
+	}
+
+	err := logging.SetupLogging(isVerbose, logFilePath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize logging")
+	}
+
+	// --- Execute command ---
+
 	if isInternalRun {
 		// Execute the background task directly
-		cmd.RunBackgroundWorkflow(targetWorkflowId, targetCfgPath, logDir, targetOnlyFilter, isVerbose)
+		cmd.RunBackgroundWorkflow(targetWorkflowId, targetCfgPath, targetLogDir, targetOnlyFilter, isVerbose)
 	} else {
 		// Normal CLI execution
 		cmd.Execute()

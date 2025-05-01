@@ -4,24 +4,21 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/google/uuid"
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/log"
+	"github.com/graceinfra/grace/internal/logging"
 	"github.com/graceinfra/grace/internal/orchestrator"
-	"github.com/graceinfra/grace/types"
 	"github.com/spf13/cobra"
 )
 
-var (
-	wantJSON   bool
-	submitOnly []string
-)
+var submitOnly []string
 
 func init() {
 	rootCmd.AddCommand(runCmd)
 
-	runCmd.Flags().BoolVar(&wantJSON, "json", false, "Return structured JSON data about each job")
 	runCmd.Flags().StringSliceVar(&submitOnly, "only", nil, "Submit only specified job(s)")
 }
 
@@ -34,18 +31,8 @@ It works with resources already available on the mainframe (previously uploaded 
 
 Run creates a timestamped log directory containing job output and a summary.json file with execution details.
 
-Use '--only' to selectively run specific jobs, or '--json' for machine-readable structured output.`,
+Use '--only' to selectively run specific jobs.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		var outputStyle types.OutputStyle
-		switch {
-		case wantJSON:
-			outputStyle = types.StyleMachineJSON
-		case Verbose:
-			outputStyle = types.StyleHumanVerbose
-		default:
-			outputStyle = types.StyleHuman
-		}
-
 		// --- Load and validate grace.yml ---
 
 		graceCfg, err := config.LoadGraceConfig("grace.yml")
@@ -58,44 +45,40 @@ Use '--only' to selectively run specific jobs, or '--json' for machine-readable 
 		workflowStartTime := time.Now()
 		workflowId := uuid.New()
 
-		logDir, err := log.CreateLogDir(workflowId, workflowStartTime, "run")
+		logDir, err := logging.CreateLogDir(workflowId, workflowStartTime, "run")
 		cobra.CheckErr(err)
 
 		// --- Prepare ExecutionContext ---
 
-		logger := log.NewLogger(outputStyle)
-
 		ctx := &context.ExecutionContext{
-			WorkflowId:  workflowId,
-			Config:      graceCfg,
-			Logger:      logger,
-			LogDir:      logDir,
-			OutputStyle: outputStyle,
-			SubmitOnly:  submitOnly,
-			GraceCmd:    "run",
+			WorkflowId: workflowId,
+			Config:     graceCfg,
+			LogDir:     logDir,
+			SubmitOnly: submitOnly,
+			GraceCmd:   "run",
 		}
 
 		// --- Instantiate and run orchestrator ---
 
 		orch := orchestrator.NewZoweOrchestrator()
-		logger.Info("Starting workflow run...")
+		log.Info().Str("workflow", workflowId.String()).Msg("Starting workflow run...")
 
 		jobExecutionRecords, err := orch.Run(ctx)
 		cobra.CheckErr(err)
 
 		// --- Construct workflow summary ---
 
-		logger.Verbose("Generating execution summary...")
+		log.Debug().Str("workflow", workflowId.String()).Msg("Generating execution summary...")
 
 		summary := generateExecutionSummary(jobExecutionRecords, workflowId, workflowStartTime, graceCfg, "run", submitOnly)
 
 		// --- Write workflow summary to summary.json ---
 
 		if err = writeSummary(summary, logDir); err != nil {
-			logger.Error("Failed to write summary.json to %s", logDir)
+			log.Error().Str("workflow", workflowId.String()).Msgf("Failed to write summary.json to %s", logDir)
 		}
 
 		fmt.Println() // Newline
-		logger.Info("✓ Workflow complete, logs saved to: %s", logDir)
+		log.Info().Str("workflow", workflowId.String()).Msgf("✓ Workflow complete, logs saved to: %s", logDir)
 	},
 }

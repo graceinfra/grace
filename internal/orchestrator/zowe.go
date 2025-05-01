@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/executor"
@@ -35,7 +37,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 
 	for _, job := range graceCfg.Jobs {
 		if len(ctx.SubmitOnly) > 0 && !slices.Contains(ctx.SubmitOnly, job.Name) {
-			ctx.Logger.Verbose("Skipping deck/upload for job %q due to --only filter", job.Name)
+			log.Debug().Str("job_name", job.Name).Msg("Skipping deck/upload due to --only filter")
 			continue
 		}
 
@@ -47,7 +49,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 
 		// --- Compile JCL (conditional) ---
 		if !noCompile {
-			ctx.Logger.Info("Generating JCL for job %q -> %s", job.Name, jclOutPath)
+			log.Info().Str("job_name", job.Name).Msgf("Generating JCL -> %s", jclOutPath)
 
 			var templatePath string
 
@@ -78,9 +80,9 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			if err != nil {
 				return fmt.Errorf("failed to write %s: %w", jclFileName, err)
 			}
-			ctx.Logger.Info("✓ JCL for job %q generated at %s", job.Name, jclOutPath)
+			log.Info().Str("job_name", job.Name).Msgf("✓ JCL generated at %s", jclOutPath)
 		} else {
-			ctx.Logger.Info("Skipping JCL compilation for job %q (--no-compile).", job.Name)
+			log.Info().Str("job_name", job.Name).Msgf("Skipping JCL compilation (--no-compile).")
 		}
 
 		// --- Upload files (conditional) ---
@@ -102,28 +104,20 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 				}
 			}
 
-			spinnerTextJCL := fmt.Sprintf("Uploading JCL deck %s ...", jobNameUpper)
-			ctx.Logger.StartSpinner(spinnerTextJCL)
-
 			target := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, jobNameUpper)
 			jclUploadRes, err := zowe.UploadFileToDataset(ctx, jclOutPath, target)
 			if err != nil {
-				ctx.Logger.StopSpinner()
 				return fmt.Errorf("failed to upload JCL %s to %s: %w", jclOutPath, target, err)
 			}
 
-			ctx.Logger.StopSpinner()
-
-			ctx.Logger.Info("✓ JCL deck for job %q uploaded", job.Name)
+			log.Info().Str("job", job.Name).Msg("✓ JCL deck uploaded")
 			if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
-				ctx.Logger.Verbose("  From: %s", jclUploadRes.Data.APIResponse[0].From)
-				ctx.Logger.Verbose("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
+				log.Debug().Str("job_name", job.Name).Msgf("  From: %s", jclUploadRes.Data.APIResponse[0].From)
+				log.Debug().Str("job_name", job.Name).Msgf("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
 			}
 
 			// --- Upload COBOL source ---
 			if job.Source != "" {
-				spinnerTextCOBOL := fmt.Sprintf("Uploading COBOL source %s ...", job.Source)
-				ctx.Logger.StartSpinner(spinnerTextCOBOL)
 
 				// Construct path to COBOL file
 				srcMember := fmt.Sprintf("%s(%s)", graceCfg.Datasets.SRC, jobNameUpper)
@@ -131,28 +125,24 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 				srcPath := filepath.Join("src", job.Source)
 				_, err = os.Stat(srcPath)
 				if err != nil {
-					ctx.Logger.StopSpinner()
 					return fmt.Errorf("unable to resolve COBOL source file %s for job %s", srcPath, job.Name)
 				}
 
 				cobolUploadRes, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
 				if err != nil {
-					ctx.Logger.StopSpinner()
 					return fmt.Errorf("COBOL source upload to %s failed for job %s: %w\n", srcMember, job.Name, err)
 				}
 
-				ctx.Logger.StopSpinner()
-
-				ctx.Logger.Info(fmt.Sprintf("✓ COBOL data set %s submitted for job %q", job.Source, job.Name))
+				log.Info().Str("job_name", job.Name).Msgf("✓ COBOL data set %s submitted", job.Source)
 				if cobolUploadRes != nil && cobolUploadRes.Data.Success && len(cobolUploadRes.Data.APIResponse) > 0 {
-					ctx.Logger.Verbose("  From: %s", cobolUploadRes.Data.APIResponse[0].From)
-					ctx.Logger.Verbose("  To:   %s", cobolUploadRes.Data.APIResponse[0].To)
+					log.Debug().Str("job_name", job.Name).Msgf("  From: %s", jclUploadRes.Data.APIResponse[0].From)
+					log.Debug().Str("job_name", job.Name).Msgf("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
 				}
 			} else {
-				ctx.Logger.Info("Skipping COBOL source upload for job %q (no source defined).", job.Name)
+				log.Info().Str("job_name", job.Name).Msg("Skipping COBOL source upload (no source defined).")
 			}
 		} else {
-			ctx.Logger.Info("Skipping uploads for job %q (--no-upload).", job.Name)
+			log.Info().Str("job_name", job.Name).Msg("Skipping uploads (--no-upload).")
 		}
 
 	}
@@ -161,6 +151,8 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 
 // Run implements the DAG job execution and monitoring logic using the executor.
 func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecutionRecord, error) {
+	workflowIdStr := ctx.WorkflowId.String()
+
 	// --- Pre-Loop Validations / Setup ---
 
 	hlq := ""
@@ -173,12 +165,12 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 	if hlq == "" {
 		return nil, fmt.Errorf("orchestration failed: invalid HLQ derived from datasets.jcl (%q). Ensure the field exists and is valid in grace.yml", ctx.Config.Datasets.JCL)
 	}
-	ctx.Logger.Verbose("Using HLQ: %s for initiator info", hlq)
+	log.Debug().Str("workflow", workflowIdStr).Msgf("Using HLQ: %s for initiator info", hlq)
 
 	// --- Build job graph ---
 
 	// Assumes ValidateGraceConfig (including cycle check)
-	ctx.Logger.Verbose("Building job graph from configuration...")
+	log.Debug().Msg("Building job graph from configuration...")
 	jobGraph, graphErr := config.BuildJobGraph(ctx.Config)
 	if graphErr != nil {
 		return nil, fmt.Errorf("orchestration failed: could not build job graph: %w", graphErr)
@@ -186,30 +178,31 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 
 	// Handle case where config is valid but has no jobs
 	if len(jobGraph) == 0 {
-		ctx.Logger.Info("No jobs defined in the configuration. Workflow finished.")
+		log.Info().Str("workflow", workflowIdStr).Msg("No jobs defined in the configuration. Workflow finished.")
 		return []models.JobExecutionRecord{}, nil
 	}
-	ctx.Logger.Verbose("Job graph built successfully with %d nodes.", len(jobGraph))
+	log.Debug().Str("workflow", workflowIdStr).Msgf("Job graph built successfully with %d nodes.", len(jobGraph))
 
 	// --- Create and run executor ---
 
 	// We pass the max concurrency value from grace.yml here
 	exec := executor.NewExecutor(ctx, jobGraph, ctx.Config.Config.Concurrency)
 
-	ctx.Logger.Verbose("Invoking executor...")
+	log.Debug().Str("workflow", workflowIdStr).Msg("Invoking executor...")
+
 	jobExecutionRecords, execErr := exec.ExecuteAndWait()
 	// NOTE: execErr represents errors from the executor's own logic (e.g. deadlock)
 	// not individual job failures. Those are captured in the jobExecutionRecords.
 
 	if execErr != nil {
-		ctx.Logger.Error("Executor encountered and error: %v", execErr)
+		log.Error().Str("workflow", workflowIdStr).Msgf("Executor encountered an error: %v", execErr)
 
 		// Return the records collected so far anyways so that the caller can still generate
 		// a partial summary
 		return jobExecutionRecords, fmt.Errorf("DAG execution failed: %w", execErr)
 	}
 
-	ctx.Logger.Info("✓ Executor finished successfully.")
+	log.Info().Str("workflow", workflowIdStr).Msg("✓ Executor finished successfully.")
 	return jobExecutionRecords, nil
 }
 
