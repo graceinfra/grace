@@ -13,6 +13,7 @@ import (
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/executor"
 	"github.com/graceinfra/grace/internal/models"
+	"github.com/graceinfra/grace/internal/paths"
 	"github.com/graceinfra/grace/internal/templates"
 	"github.com/graceinfra/grace/internal/zowe"
 )
@@ -180,6 +181,18 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 	}
 	runLogger.Debug().Msgf("Using HLQ: %s for initiator info", hlq)
 
+	// --- Preresolve output paths ---
+
+	log.Debug().Msg("Preresolving output paths...")
+	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(ctx.WorkflowId, ctx.Config)
+	if resolveErr != nil {
+		return nil, fmt.Errorf("orchestration failed: could not resolve output paths: %v", resolveErr)
+	}
+
+	// Initialize context with resolved paths
+	ctx.InitializePaths(resolvedPathMap)
+	log.Debug().Msgf("Resolved %d output paths.", len(resolvedPathMap))
+
 	// --- Build job graph ---
 
 	// Assumes ValidateGraceConfig (including cycle check)
@@ -198,7 +211,7 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 
 	// --- Create and run executor ---
 
-	// We pass the max concurrency value from grace.yml here
+	// We pass the max concurrency setting from grace.yml here
 	exec := executor.NewExecutor(ctx, jobGraph, ctx.Config.Config.Concurrency)
 
 	runLogger.Debug().Msg("Invoking executor...")
