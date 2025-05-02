@@ -91,7 +91,25 @@ func ValidateGraceConfig(cfg *types.GraceConfig) error {
 
 	// --- Validate dependencies & build graph links ---
 
-	depErrs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph)
+	depErrs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph, producedPaths)
+
+	// --- *** ADD DEBUG PRINTING HERE *** ---
+	// fmt.Println("--- DEBUG: Graph Structure before Cycle Check ---")
+	// for name, node := range jobGraph {
+	// 	fmt.Printf("Node: %s\n", name)
+	// 	depNames := []string{}
+	// 	for _, dep := range node.Dependencies {
+	// 		depNames = append(depNames, dep.Job.Name)
+	// 	}
+	// 	fmt.Printf("  Dependencies: %v\n", depNames)
+	// 	dependentNames := []string{}
+	// 	for _, dpt := range node.Dependents {
+	// 		dependentNames = append(dependentNames, dpt.Job.Name)
+	// 	}
+	// 	fmt.Printf("  Dependents: %v\n", dependentNames)
+	// }
+	// fmt.Println("--- END DEBUG ---")
+	// --- *** END DEBUG PRINTING *** ---
 
 	// --- Cycle detection ---
 
@@ -188,12 +206,6 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			errs = append(errs, fmt.Sprintf("%s: invalid step %q; allowed steps are: %v", jobCtx, job.Step, allowed))
 		}
 
-		if job.Step == "execute" && job.Source == "" && len(job.Inputs) == 0 && len(job.Outputs) == 0 {
-			if job.Step == "execute" && job.Source == "" {
-				errs = append(errs, fmt.Sprintf("%s: field 'source' is required for step 'execute'", jobCtx))
-			}
-		}
-
 		// Validate job inputs
 		inputDDNames := make(map[string]bool)
 		for j, inputSpec := range job.Inputs {
@@ -201,7 +213,7 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 
 			if inputSpec.Name == "" {
 				errs = append(errs, fmt.Sprintf("%s: field 'name' (DDName) is required", inputCtx))
-			} else if !ddNameRegex.MatchString(inputSpec.Path) {
+			} else if !ddNameRegex.MatchString(strings.ToUpper(inputSpec.Name)) {
 				errs = append(errs, fmt.Sprintf("%s: invalid 'name' (DDName) %q", inputCtx, inputSpec.Name))
 			} else {
 				// Check for duplicate DDNames within the same job's inputs
@@ -216,9 +228,13 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 				errs = append(errs, fmt.Sprintf("%s: field 'path' (virtual path) is required", inputCtx))
 			} else if !virtualPathRegex.MatchString(inputSpec.Path) {
 				errs = append(errs, fmt.Sprintf("%s: invalid 'path' format %q (must be scheme://resource)", inputCtx, inputSpec.Path))
-			} else if !strings.HasPrefix(inputSpec.Path, "temp://") {
-				// Initially only support temp:// - extend later
-				errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q (only temp:// allowed for now)", inputCtx, inputSpec.Path))
+			} else {
+				isTemp := strings.HasPrefix(inputSpec.Path, "temp://")
+				isSrc := strings.HasPrefix(inputSpec.Path, "src://")
+
+				if !isTemp && !isSrc {
+					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q (only temp:// allowed for now)", inputCtx, inputSpec.Path))
+				}
 			}
 		}
 
@@ -246,8 +262,13 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 				errs = append(errs, fmt.Sprintf("%s: field 'path' (virtual path) is required", outputCtx))
 			} else if !virtualPathRegex.MatchString(outputSpec.Path) {
 				errs = append(errs, fmt.Sprintf("%s: invalid 'path' format %q (must be scheme://resource)", outputCtx, outputSpec.Path))
-			} else if !strings.HasPrefix(outputSpec.Path, "temp://") {
-				errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q (only temp:// allowed initially)", outputCtx, outputSpec.Path))
+			} else {
+				isTemp := strings.HasPrefix(outputSpec.Path, "temp://")
+				isSrc := strings.HasPrefix(outputSpec.Path, "src://")
+
+				if !isTemp && !isSrc {
+					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q (only temp:// allowed for now)", outputCtx, outputSpec.Path))
+				}
 			}
 		}
 	}
@@ -260,47 +281,45 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string]*types.Job, jobGraph map[string]*JobNode, producedPaths map[string]string) []string {
 	var errs []string
 
-	for i, job := range cfg.Jobs {
-		jobCtx := fmt.Sprintf("job[%d] (name: %q)", i, job.Name)
-		node := jobGraph[job.Name]
+	// --- Build the graph links based on explicit depends_on ---
+	for _, currentJob := range cfg.Jobs {
+		jobCtx := fmt.Sprintf("job (name: %q)", currentJob.Name)
+		currentNode := jobGraph[currentJob.Name]
+		if currentNode == nil { // Should not happen
+			errs = append(errs, fmt.Sprintf("%s: internal error - node not found in graph map", jobCtx))
+			continue
+		}
 
-		// Validate explicit 'depends_on' and build graph links
-		for _, depName := range job.DependsOn {
-			_, exists := jobMap[depName]
-
+		for _, depName := range currentJob.DependsOn {
+			dependencyNode, exists := jobGraph[depName]
 			if !exists {
 				errs = append(errs, fmt.Sprintf("%s: dependency %q not found", jobCtx, depName))
 				continue
 			}
-
-			if depName == job.Name {
+			if depName == currentJob.Name {
 				errs = append(errs, fmt.Sprintf("%s: job cannot depend on itself", jobCtx))
 				continue
 			}
 
-			if node != nil {
-				depNode := jobGraph[depName]
-				if depNode != nil {
-					node.Dependencies = append(node.Dependencies, depNode)
-					node.Dependents = append(node.Dependents, node)
-				}
-			}
+			// Add edge: dependencyNode -> currentNode
+			currentNode.Dependencies = append(currentNode.Dependencies, dependencyNode)
+			dependencyNode.Dependents = append(dependencyNode.Dependents, currentNode)
 		}
+	} // End depends_on link building loop
 
-		// Validate 'inputs' availability (based on producedPaths) map
-		for j, inputSpec := range job.Inputs {
+	// --- Validate inputs availability (separate loop for clarity) ---
+	for _, currentJob := range cfg.Jobs {
+		jobCtx := fmt.Sprintf("job (name: %q)", currentJob.Name)
+		for j, inputSpec := range currentJob.Inputs {
 			inputCtx := fmt.Sprintf("%s input[%d]", jobCtx, j)
-			_, produced := producedPaths[inputSpec.Path]
-			if !produced {
+			producerJobName, produced := producedPaths[inputSpec.Path]
+
+			if !produced && strings.HasPrefix(inputSpec.Path, "temp://") {
 				errs = append(errs, fmt.Sprintf("%s: input path %q is not produced by any job", inputCtx, inputSpec.Path))
 				continue
+			} else if produced {
+				_ = producerJobName
 			}
-			// Optional: Check for logical dependency mismatches.
-			// If job explicitly depends_on [A], but consumes a file produced by B, is that an error?
-			// For now, we only check availability. Scheduling relies on depends_on.
-			// We could add a check here later: if input path is produced by JobB, ensure JobB
-			// is listed in job.DependsOn or is an ancestor via DependsOn.
-			// Let's skip this complex check for now.
 		}
 	}
 
@@ -310,48 +329,58 @@ func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string
 // detectCycle performs DFS to find cycles in the job graph.
 // Returns a slice of job names representing the cycle path if found, otherwise nil.
 func detectCycle(graph map[string]*JobNode) []string {
+	path := []string{}
 	visited := make(map[string]bool)
-	inStack := make(map[string]bool)
+	visiting := make(map[string]bool)
 
-	var dfs func(string) []string
-	dfs = func(current string) []string {
-		if inStack[current] {
-			return []string{current}
-		}
+	var dfs func(nodeName string) []string // Returns the cycle path if found
 
-		if visited[current] {
-			return nil
-		}
+	dfs = func(nodeName string) []string {
+		visited[nodeName] = true
+		visiting[nodeName] = true
+		path = append(path, nodeName)
 
-		visited[current] = true
-		inStack[current] = true
-
-		node := graph[current]
+		node := graph[nodeName]
 		for _, dep := range node.Dependents {
 			depName := dep.Job.Name
 
-			if result := dfs(depName); result != nil {
-				if result[0] == current {
-					return result
+			if visiting[depName] {
+				// Cycle detected
+				// Encountered a node already in the current recursion stack
+				cycleStartIndex := -1
+				for i, nameInPath := range path {
+					if nameInPath == depName {
+						cycleStartIndex = i
+						break
+					}
 				}
-				return append([]string{current}, result...)
+
+				if cycleStartIndex != -1 {
+					return append(path[cycleStartIndex:], depName)
+				} else {
+					fmt.Fprintf(os.Stderr, "DEBUG: Cycle detected but start node %s not in path %v\n", depName, path)
+					return append(path, depName)
+				}
+			}
+
+			if !visited[depName] {
+				// If a dependent hasn't been visited at all, recurse
+				if cycleResult := dfs(depName); cycleResult != nil {
+					// If a cycle was found deeper down, propagate up immediately
+					return cycleResult
+				}
 			}
 		}
 
-		inStack[current] = false
+		path = path[:len(path)-1]
+		visiting[nodeName] = false
 		return nil
 	}
 
-	for name := range graph {
-		if !visited[name] {
-			if result := dfs(name); result != nil {
-				// Format cycle
-				for i, node := range result {
-					if i > 0 && node == result[0] {
-						return result[:i+1]
-					}
-				}
-				return result
+	for nodeName := range graph {
+		if !visited[nodeName] {
+			if cycle := dfs(nodeName); cycle != nil {
+				return cycle
 			}
 		}
 	}

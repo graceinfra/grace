@@ -2,12 +2,14 @@ package orchestrator
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"text/template"
 
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
 	"github.com/graceinfra/grace/internal/config"
@@ -50,11 +52,18 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 	// --- Preresolve paths needed for JCL generation ---
 
 	log.Debug().Str("workflow_id", ctx.WorkflowId.String()).Msg("Preresolving output paths for decking...")
-	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(ctx.WorkflowId, ctx.Config)
+	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(graceCfg)
 	if resolveErr != nil {
 		return fmt.Errorf("decking failed: could not resolve output paths: %w", resolveErr)
 	}
-	ctx.InitializePaths(resolvedPathMap)
+
+	// Initialize context with resolved paths
+	ctx.PathMutex.Lock()
+	if ctx.ResolvedPaths == nil {
+		ctx.ResolvedPaths = make(map[string]string)
+	}
+	maps.Copy(ctx.ResolvedPaths, resolvedPathMap)
+	ctx.PathMutex.Unlock()
 
 	for _, job := range graceCfg.Jobs {
 		if len(ctx.SubmitOnly) > 0 && !slices.Contains(ctx.SubmitOnly, job.Name) {
@@ -67,7 +76,12 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 		jclOutPath := filepath.Join(deckDir, jclFileName)
 
 		// Initialize contextual logger
-		logCtx := log.With().Str("job_name", job.Name).Str("workflow_id", ctx.WorkflowId.String()).Logger()
+		logCtx := log.Logger
+		if ctx.WorkflowId != uuid.Nil {
+			logCtx = log.With().Str("job_name", job.Name).Str("workflow_id", ctx.WorkflowId.String()).Logger()
+		} else {
+			logCtx = log.With().Str("job_name", job.Name).Logger()
+		}
 
 		fmt.Println() // Newline
 
@@ -111,7 +125,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 
 			data := map[string]string{
 				"JobName":      job.Name, // Template applies ToUpper internally
-				"WorkflowId":   ctx.WorkflowId.String(),
+				"WorkflowId":   "DECK-RUN",
 				"ProgramName":  jobNameUpper, // TODO: for now we just assume program name matches job name
 				"LoadLib":      graceCfg.Datasets.LoadLib,
 				"DDStatements": ddStatements,
@@ -199,6 +213,8 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 		}
 
 	}
+
+	log.Info().Msg("✓ Deck and upload process completed.")
 	return nil
 }
 
@@ -224,13 +240,19 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 	// --- Preresolve output paths ---
 
 	log.Debug().Msg("Preresolving output paths...")
-	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(ctx.WorkflowId, ctx.Config)
+	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(ctx.Config)
 	if resolveErr != nil {
 		return nil, fmt.Errorf("orchestration failed: could not resolve output paths: %v", resolveErr)
 	}
 
 	// Initialize context with resolved paths
-	ctx.InitializePaths(resolvedPathMap)
+	ctx.PathMutex.Lock()
+	if ctx.ResolvedPaths == nil {
+		ctx.ResolvedPaths = make(map[string]string)
+	}
+	maps.Copy(ctx.ResolvedPaths, resolvedPathMap)
+	ctx.PathMutex.Unlock()
+
 	log.Debug().Msgf("Resolved %d output paths.", len(resolvedPathMap))
 
 	// --- Build job graph ---

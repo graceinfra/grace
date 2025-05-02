@@ -8,31 +8,31 @@ datasets:
   loadlib: IBMUSER.LOAD
 
 jobs:
-  - name: compile-hello
+  - name: cmphello
     step: compile
     inputs:
-      - name: sysin
+      - name: SYSIN
         path: src://hello.cbl
       # optional: add SYSLIB if copybooks are needed
       # - name: syslib
       #   path: zos://USER.COBOL.COPYLIB
       #   object deck goes out via SYSLIN DD
     outputs:
-      - name: syslin
+      - name: SYSLIN
         path: temp://hello.obj
       # Optional: Add DCB/SPACE if needed for object deck dataset
       # Optional: Capture compiler listing
       # - name: sysprint
       #   path: temp://compile-hello.list
 
-  - name: link-hello
+  - name: lnkhello
     step: linkedit
-    depends_on: [link-hello]
+    depends_on: [cmphello]
     inputs:
       - name: syslin
         path: temp://hello.obj
 
 
-  - name: run-hello
+  - name: runhello
     step: execute
-    depends_on: [link-hello]
+    depends_on: [lnkhello]

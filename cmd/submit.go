@@ -50,21 +50,21 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 		workflowId := uuid.New()
 		workflowStartTime := time.Now()
 
-		// Initialize contextual logger
-		logger := log.With().Str("workflow_id", workflowId.String()).Logger()
+		// Initialize contextual logCtx
+		logCtx := log.With().Str("workflow_id", workflowId.String()).Logger()
 
 		logDir, err := logging.CreateLogDir(workflowId, workflowStartTime, "submit")
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to create log directory for workflow %s: %w", workflowId.String(), err))
 		}
-		logger.Info().Msgf("Logs for will be stored in: %s", logDir)
+		logCtx.Info().Msgf("Logs for will be stored in: %s", logDir)
 
 		// Find the currently running grace executable
 		executablePath, err := os.Executable()
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to determine grace executable path: %w", err))
 		}
-		logger.Debug().Msgf("Found grace executable at: %s", executablePath)
+		logCtx.Debug().Msgf("Found grace executable at: %s", executablePath)
 
 		// Get absolute path to grace.yml for the background process
 		absConfigPath, err := filepath.Abs(configPath)
@@ -77,7 +77,6 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 		bgArgs := []string{
 			"--internal-run",
 			"--workflow-id", workflowId.String(),
-			"--cfg-path", absConfigPath,
 			"--cfg-path", absConfigPath,
 			"--log-dir", logDir, // this includes '.grace/logs/' in the path
 		}
@@ -105,7 +104,7 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 		}
 		// TODO: add //go:build windows section here later for Windows detachment flags
 
-		logger.Info().Msg("Launching background process...")
+		logCtx.Info().Msg("Launching background process...")
 
 		// --- Start the background process ---
 
@@ -114,8 +113,8 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 			cobra.CheckErr(fmt.Errorf("failed to start background Grace process: %w", err))
 		}
 
-		logger.Info().Msg("✓ Workflow submitted successfully.")
-		logger.Info().Msgf("  Logs will be written to: %s", logDir)
-		logger.Info().Msgf("  Use 'grace status %s' or 'grace dash' to check progress.", workflowId.String())
+		logCtx.Info().Msg("✓ Workflow submitted successfully.")
+		logCtx.Info().Msgf("  Logs will be written to: %s", logDir)
+		logCtx.Info().Msgf("  Use 'grace status %s' or 'grace dash' to check progress.", workflowId.String())
 	},
 }

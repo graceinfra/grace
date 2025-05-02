@@ -395,25 +395,47 @@ func (e *Executor) executeJob(jobName string) {
 	record.FinishTime = finishTime.Format(time.RFC3339)
 	record.DurationMs = int64(finishTime.Sub(startTime).Milliseconds())
 
-	// --- Determine final state ---
+	// --- Determine final state AND success ---
 
 	finalState := StateFailed
+	isSuccess := false
+
 	if waitErr != nil {
-		jobIdLogger.Error().Err(waitErr).Msg("Failed to get final status!")
-	} else if finalResult != nil && finalResult.Data != nil {
-		if finalResult.Data.Status == "OUTPUT" {
-			finalState = StateSucceeded
-			retCode := "null"
-			if finalResult.Data.RetCode != nil {
-				retCode = *finalResult.Data.RetCode
-			}
-			jobIdLogger.Info().Msgf("✓ Job completed: Status %s, RC %s", finalResult.Data.Status, retCode)
-		} else {
-			jobIdLogger.Error().Msgf("✓ Job finished with non-OUTPUT status: %s", finalResult.Data.Status)
-			// State remains FAILED
-		}
-	} else {
+		jobIdLogger.Error().Err(waitErr).Msg("Failed to get final status after waiting")
+	} else if finalResult == nil || finalResult.Data == nil {
 		jobIdLogger.Error().Msg("Polling for job finished, but final status data is incomplete.")
+	} else {
+		status := finalResult.Data.Status
+		retCodeStr := "null"
+		isRcSuccess := true
+
+		if finalResult.Data.RetCode != nil {
+			retCodeStr = *finalResult.Data.RetCode
+			if retCodeStr != "CC 0000" && retCodeStr != "CC 0004" && retCodeStr != "JCL ERROR" /* Also check JCL ERROR string */ {
+				// Consider codes like ABENDs (Sxxx, Uxxx) or high CCs here too if needed
+				isRcSuccess = false
+			}
+			// Also treat "JCL ERROR" retcode string explicitly as not successful RC
+			if retCodeStr == "JCL ERROR" {
+				isRcSuccess = false
+			}
+		}
+
+		// Determine success: Status must be OUTPUT and RC must be successful
+		if status == "OUTPUT" && isRcSuccess {
+			finalState = StateSucceeded
+			isSuccess = true
+			jobIdLogger.Info().Msgf("✓ Job completed: Status %s, RC %s", status, retCodeStr)
+		} else {
+			// Any other status OR OUTPUT with a non-success RC is treated as failure for state machine
+			finalState = StateFailed
+			isSuccess = false
+			if status != "OUTPUT" {
+				jobIdLogger.Warn().Msgf("Job finished with non-OUTPUT status: %s", status)
+			} else { // Status was OUTPUT, so RC must have been bad
+				jobIdLogger.Warn().Msgf("Job finished with OUTPUT status but non-success RC: %s", retCodeStr)
+			}
+		}
 	}
 
 	// --- Final update ---
@@ -422,13 +444,14 @@ func (e *Executor) executeJob(jobName string) {
 	e.addResult(jobName, record)
 	err := logging.SaveJobExecutionRecord(e.ctx.LogDir, *record)
 	if err != nil {
-		jobIdLogger.Error().
-			Err(err).
-			Str("log_dir", e.ctx.LogDir).
-			Msg("Failed to save job execution record")
+		jobIdLogger.Error().Err(err).Str("log_dir", e.ctx.LogDir).Msg("Failed to save job execution record")
 	}
 
-	jobIdLogger.Info().Msgf("✅ Finished job execution. Final state: %s", finalState)
+	if isSuccess {
+		jobIdLogger.Info().Msgf("✅ Finished job execution. Final state: %s", finalState)
+	} else {
+		jobIdLogger.Error().Msgf("❌ Finished job execution. Final state: %s", finalState)
+	}
 }
 
 // markSkippedJobs iterates through jobs that are still PENDING after the main loop

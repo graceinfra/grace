@@ -94,13 +94,14 @@ func generateExecutionSummary(
 			finalStatus == "SEC ERROR" ||
 			finalStatus == "SYSTEM FAILURE" ||
 			finalStatus == "CANCELED" ||
+			// Also consider a non-null, non-zero/non-4 return code with OUTPUT status as failure
+			(finalStatus == "OUTPUT" && finalRetCode != nil && *finalRetCode != "CC 0000" && *finalRetCode != "CC 0004") || // Example: Treat > CC 0004 as failure
 			(finalStatus != "OUTPUT" && finalStatus != "SKIPPED" && record.JobID != "PENDING" && record.JobID != "SKIPPED")
 
 		if isFailed {
 			jobsFailed++
 			if firstFailure == nil {
 				firstFailure = &jobSummaries[len(jobSummaries)-1]
-				overallStatus = "Failed" // Tentative status
 			}
 		} else if finalStatus == "OUTPUT" {
 			jobsSucceeded++
