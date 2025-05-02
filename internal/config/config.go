@@ -217,50 +217,51 @@ func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string
 // detectCycle performs DFS to find cycles in the job graph.
 // Returns a slice of job names representing the cycle path if found, otherwise nil.
 func detectCycle(graph map[string]*JobNode) []string {
-	path := make([]string, 0)
 	visited := make(map[string]bool)
-	recursionStack := make(map[string]bool)
-
-	var dfs func(nodeName string) []string
-	dfs = func(nodeName string) []string {
-		node := graph[nodeName]
-		visited[nodeName] = true
-		path = append(path, nodeName)
-
-		for _, dependent := range node.Dependents { // Check who depends on this node
-			depName := dependent.Job.Name
-			if !visited[depName] {
-				if cycle := dfs(depName); cycle != nil {
-					return cycle // Cycle found deeper
+	inStack := make(map[string]bool)
+	
+	var dfs func(string) []string
+	dfs = func(current string) []string {
+		if inStack[current] {
+			return []string{current}
+		}
+		
+		if visited[current] {
+			return nil
+		}
+		
+		visited[current] = true
+		inStack[current] = true
+		
+		node := graph[current]
+		for _, dep := range node.Dependents {
+			depName := dep.Job.Name
+			
+			if result := dfs(depName); result != nil {
+				if result[0] == current {
+					return result
 				}
-			} else if recursionStack[depName] {
-				// Found a back edge to a node already in the current recursion stack AKA we found a cycle
-				// Find the start of the cycle in the current path
-				cycleStartIndex := -1
-				for i, nameInPath := range path {
-					if nameInPath == depName {
-						cycleStartIndex = i
-						break
+				return append([]string{current}, result...)
+			}
+		}
+		
+		inStack[current] = false
+		return nil
+	}
+	
+	for name := range graph {
+		if !visited[name] {
+			if result := dfs(name); result != nil {
+				// Format cycle
+				for i, node := range result {
+					if i > 0 && node == result[0] {
+						return result[:i+1]
 					}
 				}
-
-				return append(path[cycleStartIndex:], depName)
-			}
-		}
-
-		// Backtrack
-		path = path[:len(path)-1]
-		recursionStack[nodeName] = false
-		return nil // No cycle found from this node
-	}
-
-	for nodeName := range graph {
-		if !visited[nodeName] {
-			if cycle := dfs(nodeName); cycle != nil {
-				return cycle // Return the first cycle found
+				return result
 			}
 		}
 	}
-
-	return nil // No cycles found in the graph
+	
+	return nil
 }

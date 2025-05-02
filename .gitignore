@@ -1,3 +1,6 @@
 grace
 .grace
 zapp.yaml
+coverage.out
+
+**/.claude/settings.local.json
