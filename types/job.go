@@ -8,9 +8,17 @@ type Job struct {
 
 	DependsOn []string `yaml:"depends_on,omitempty"`
 
+	Inputs  []FileSpec `yaml:"inputs,omitempty"`
+	Outputs []FileSpec `yaml:"outputs,omitempty"`
+
 	Wait    bool   `yaml:"wait,omitempty"`
 	View    string `yaml:"view"`
 	Retries int    `yaml:"retries"`
+}
+
+type FileSpec struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path"`
 }
 
 type JobResult interface {

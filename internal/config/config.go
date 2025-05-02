@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -16,6 +17,14 @@ var allowedSteps = map[string]bool{
 	"execute": true,
 	// TODO: Add other steps like "compile", "link" here as they become supported
 }
+
+// --- Define validation rules for DD names and virtual paths ---
+
+// Basic DDName validation (1-8 chars, starts non-numeric, common chars)
+var ddNameRegex = regexp.MustCompile(`^[A-Z#$@][A-Z0-9#$@]{0,7}$`)
+
+// Basic virtual path check (e.g., scheme://path)
+var virtualPathRegex = regexp.MustCompile(`^[a-zA-Z]+://.+`)
 
 func LoadGraceConfig(filename string) (*types.GraceConfig, error) {
 	data, err := os.ReadFile(filename)
@@ -55,14 +64,28 @@ func ValidateGraceConfig(cfg *types.GraceConfig) error {
 
 	jobMap := make(map[string]*types.Job, len(cfg.Jobs))
 	jobGraph := make(map[string]*JobNode, len(cfg.Jobs))
+	producedPaths := make(map[string]string) // virtual path -> name of producing job
 
 	if len(syntaxErrs) != 0 {
 		return errors.New("Grace configuration validation failed:\n- " + strings.Join(syntaxErrs, "\n- "))
-	} else {
-		for _, job := range cfg.Jobs {
-			jobMap[job.Name] = job
-			jobGraph[job.Name] = &JobNode{Job: job}
+	}
+
+	for _, job := range cfg.Jobs {
+		jobMap[job.Name] = job
+		jobGraph[job.Name] = &JobNode{Job: job}
+
+		for _, outputSpec := range job.Outputs {
+			if producerJob, exists := producedPaths[outputSpec.Path]; exists {
+				// Error - same virtual path produced by multiple jobs
+				syntaxErrs = append(syntaxErrs, fmt.Sprintf("job[%q] and job[%q] both produce the same virtual path %q", producerJob, job.Name, outputSpec.Path))
+			} else {
+				producedPaths[outputSpec.Path] = job.Name
+			}
 		}
+	}
+
+	if len(syntaxErrs) != 0 {
+		return errors.New("Grace configuration validation failed:\n- " + strings.Join(syntaxErrs, "\n- "))
 	}
 
 	// --- Validate dependencies & build graph links ---
@@ -164,30 +187,83 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			errs = append(errs, fmt.Sprintf("%s: invalid step %q; allowed steps are: %v", jobCtx, job.Step, allowed))
 		}
 
-		// Validate job.Source (required for 'execute' step)
-		// Add conditions here if other steps don't require 'source'
-		if job.Step == "execute" && job.Source == "" {
-			errs = append(errs, fmt.Sprintf("%s: field 'source' is required for step 'execute'", jobCtx))
+		if job.Step == "execute" && job.Source == "" && len(job.Inputs) == 0 && len(job.Outputs) == 0 {
+			if job.Step == "execute" && job.Source == "" {
+				errs = append(errs, fmt.Sprintf("%s: field 'source' is required for step 'execute'", jobCtx))
+			}
 		}
-		// Potential future validation: check if source file exists relative to grace.yml
 
-		// Validate job.Template (optional)
-		// if job.Template != "" {
-		//    // Potential future validation: check if template file exists
-		// }
+		// Validate job inputs
+		inputDDNames := make(map[string]bool)
+		for j, inputSpec := range job.Inputs {
+			inputCtx := fmt.Sprintf("%s input[%d]", jobCtx, j)
+
+			if inputSpec.Name == "" {
+				errs = append(errs, fmt.Sprintf("%s: field 'name' (DDName) is required", inputCtx))
+			} else if !ddNameRegex.MatchString(inputSpec.Path) {
+				errs = append(errs, fmt.Sprintf("%s: invalid 'name' (DDName) %q", inputCtx, inputSpec.Name))
+			} else {
+				// Check for duplicate DDNames within the same job's inputs
+				if inputDDNames[inputSpec.Name] {
+					errs = append(errs, fmt.Sprintf("%s: duplicate input DDName %q found", jobCtx, inputSpec.Name))
+				}
+
+				inputDDNames[inputSpec.Name] = true
+			}
+
+			if inputSpec.Path == "" {
+				errs = append(errs, fmt.Sprintf("%s: field 'path' (virtual path) is required", inputCtx))
+			} else if !virtualPathRegex.MatchString(inputSpec.Path) {
+				errs = append(errs, fmt.Sprintf("%s: invalid 'path' format %q (must be scheme://resource)", inputCtx, inputSpec.Path))
+			} else if !strings.HasPrefix(inputSpec.Path, "temp://") {
+				// Initially only support temp:// - extend later
+				errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q (only temp:// allowed for now)", inputCtx, inputSpec.Path))
+			}
+		}
+
+		// Validate job outputs
+		outputDDNames := make(map[string]bool)
+		for k, outputSpec := range job.Outputs {
+			outputCtx := fmt.Sprintf("%s output[%d]", jobCtx, k)
+			if outputSpec.Name == "" {
+				errs = append(errs, fmt.Sprintf("%s: field 'name' (DDName) is required", outputCtx))
+			} else if !ddNameRegex.MatchString(outputSpec.Name) {
+				errs = append(errs, fmt.Sprintf("%s: invalid 'name' (DDName) %q", outputCtx, outputSpec.Name))
+			} else {
+				// Check for duplicate DDNames within the same job's outputs
+				if outputDDNames[outputSpec.Name] {
+					errs = append(errs, fmt.Sprintf("%s: duplicate output DDName %q found", jobCtx, outputSpec.Name))
+				}
+				outputDDNames[outputSpec.Name] = true
+				// Check if an output DDName conflicts with an input DDName
+				if inputDDNames[outputSpec.Name] {
+					errs = append(errs, fmt.Sprintf("%s: output DDName %q conflicts with an input DDName in the same job", jobCtx, outputSpec.Name))
+				}
+			}
+
+			if outputSpec.Path == "" {
+				errs = append(errs, fmt.Sprintf("%s: field 'path' (virtual path) is required", outputCtx))
+			} else if !virtualPathRegex.MatchString(outputSpec.Path) {
+				errs = append(errs, fmt.Sprintf("%s: invalid 'path' format %q (must be scheme://resource)", outputCtx, outputSpec.Path))
+			} else if !strings.HasPrefix(outputSpec.Path, "temp://") {
+				errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q (only temp:// allowed initially)", outputCtx, outputSpec.Path))
+			}
+		}
 	}
 
 	return errs
 }
 
-// validateDependenciesAndBuildGraph checks if dependencies exist and populates the graph structure
-func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string]*types.Job, jobGraph map[string]*JobNode) []string {
+// validateDependenciesAndBuildGraph checks explicit dependencies and input path availability.
+// It populates the graph structure used for cycle detection.
+func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string]*types.Job, jobGraph map[string]*JobNode, producedPaths map[string]string) []string {
 	var errs []string
 
 	for i, job := range cfg.Jobs {
 		jobCtx := fmt.Sprintf("job[%d] (name: %q)", i, job.Name)
 		node := jobGraph[job.Name]
 
+		// Validate explicit 'depends_on' and build graph links
 		for _, depName := range job.DependsOn {
 			_, exists := jobMap[depName]
 
@@ -209,6 +285,22 @@ func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string
 				}
 			}
 		}
+
+		// Validate 'inputs' availability (based on producedPaths) map
+		for j, inputSpec := range job.Inputs {
+			inputCtx := fmt.Sprintf("%s input[%d]", jobCtx, j)
+			_, produced := producedPaths[inputSpec.Path]
+			if !produced {
+				errs = append(errs, fmt.Sprintf("%s: input path %q is not produced by any job", inputCtx, inputSpec.Path))
+				continue
+			}
+			// Optional: Check for logical dependency mismatches.
+			// If job explicitly depends_on [A], but consumes a file produced by B, is that an error?
+			// For now, we only check availability. Scheduling relies on depends_on.
+			// We could add a check here later: if input path is produced by JobB, ensure JobB
+			// is listed in job.DependsOn or is an ancestor via DependsOn.
+			// Let's skip this complex check for now.
+		}
 	}
 
 	return errs
@@ -219,24 +311,24 @@ func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string
 func detectCycle(graph map[string]*JobNode) []string {
 	visited := make(map[string]bool)
 	inStack := make(map[string]bool)
-	
+
 	var dfs func(string) []string
 	dfs = func(current string) []string {
 		if inStack[current] {
 			return []string{current}
 		}
-		
+
 		if visited[current] {
 			return nil
 		}
-		
+
 		visited[current] = true
 		inStack[current] = true
-		
+
 		node := graph[current]
 		for _, dep := range node.Dependents {
 			depName := dep.Job.Name
-			
+
 			if result := dfs(depName); result != nil {
 				if result[0] == current {
 					return result
@@ -244,11 +336,11 @@ func detectCycle(graph map[string]*JobNode) []string {
 				return append([]string{current}, result...)
 			}
 		}
-		
+
 		inStack[current] = false
 		return nil
 	}
-	
+
 	for name := range graph {
 		if !visited[name] {
 			if result := dfs(name); result != nil {
@@ -262,6 +354,6 @@ func detectCycle(graph map[string]*JobNode) []string {
 			}
 		}
 	}
-	
+
 	return nil
 }
