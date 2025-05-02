@@ -14,8 +14,9 @@ import (
 )
 
 var allowedSteps = map[string]bool{
-	"execute": true,
-	// TODO: Add other steps like "compile", "link" here as they become supported
+	"execute":  true,
+	"compile":  true,
+	"linkedit": true,
 }
 
 // --- Define validation rules for DD names and virtual paths ---

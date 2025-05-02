@@ -6,15 +6,17 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"text/template"
 
 	"github.com/rs/zerolog/log"
 
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/executor"
+	"github.com/graceinfra/grace/internal/jcl"
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/paths"
-	"github.com/graceinfra/grace/internal/templates"
+	grctemplate "github.com/graceinfra/grace/internal/templates"
 	"github.com/graceinfra/grace/internal/zowe"
 )
 
@@ -45,6 +47,15 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 		return fmt.Errorf("loadlib %q does not exist", ctx.Config.Datasets.LoadLib)
 	}
 
+	// --- Preresolve paths needed for JCL generation ---
+
+	log.Debug().Str("workflow_id", ctx.WorkflowId.String()).Msg("Preresolving output paths for decking...")
+	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(ctx.WorkflowId, ctx.Config)
+	if resolveErr != nil {
+		return fmt.Errorf("decking failed: could not resolve output paths: %w", resolveErr)
+	}
+	ctx.InitializePaths(resolvedPathMap)
+
 	for _, job := range graceCfg.Jobs {
 		if len(ctx.SubmitOnly) > 0 && !slices.Contains(ctx.SubmitOnly, job.Name) {
 			log.Debug().Str("job_name", job.Name).Msg("Skipping deck/upload due to --only filter")
@@ -56,16 +67,17 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 		jclOutPath := filepath.Join(deckDir, jclFileName)
 
 		// Initialize contextual logger
-		deckJobLogger := log.With().Str("job_name", job.Name).Logger()
+		logCtx := log.With().Str("job_name", job.Name).Str("workflow_id", ctx.WorkflowId.String()).Logger()
 
 		fmt.Println() // Newline
 
 		// --- Compile JCL (conditional) ---
 		if !noCompile {
-			deckJobLogger.Info().Msgf("Generating JCL -> %s", jclOutPath)
+			logCtx.Info().Msgf("Generating JCL -> %s", jclOutPath)
+
+			// --- Determine template ---
 
 			var templatePath string
-
 			step := job.Step
 
 			if job.Template != "" {
@@ -74,28 +86,49 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 				switch step {
 				case "execute":
 					templatePath = "files/execute.jcl.tmpl"
+				case "compile":
+					templatePath = "files/compile.jcl.tmpl"
+				case "linkedit":
+					templatePath = "files/linkedit.jcl.tmpl"
 				default:
-					return fmt.Errorf("unsupported step: %s", step)
+					logCtx.Error().Str("step", step).Msg("Unsupported step type")
+					return fmt.Errorf("unsupported step type %q for job %q", step, job.Name)
 				}
 			} else {
-				return fmt.Errorf("no template found for step %s", step)
+				logCtx.Error().Str("step", step).Msg("No step or template defined")
+				return fmt.Errorf("job %q has no step or template defined", job.Name)
 			}
 
-			cobolDsn := graceCfg.Datasets.SRC + "(" + jobNameUpper + ")"
+			// --- Generate DD statements ---
+
+			ddStatements, err := jcl.GenerateDDStatements(job, ctx)
+			if err != nil {
+				logCtx.Error().Err(err).Msg("Failed to generate DD statements")
+				return err // Stop decking process if DDs fail
+			}
+
+			// --- Prepare template data ---
 
 			data := map[string]string{
-				"JobName":  jobNameUpper,
-				"CobolDSN": cobolDsn,
-				"LoadLib":  graceCfg.Datasets.LoadLib,
+				"JobName":      job.Name, // Template applies ToUpper internally
+				"WorkflowId":   ctx.WorkflowId.String(),
+				"ProgramName":  jobNameUpper, // TODO: for now we just assume program name matches job name
+				"LoadLib":      graceCfg.Datasets.LoadLib,
+				"DDStatements": ddStatements,
 			}
 
-			err := templates.WriteTpl(templatePath, jclOutPath, data)
+			funcMap := template.FuncMap{
+				"ToUpper": strings.ToUpper,
+			}
+
+			err = grctemplate.WriteTplWithFuncs(templatePath, jclOutPath, data, funcMap)
 			if err != nil {
+				logCtx.Error().Err(err).Str("template", templatePath).Msg("Failed to write JCL template")
 				return fmt.Errorf("failed to write %s: %w", jclFileName, err)
 			}
-			deckJobLogger.Info().Msgf("✓ JCL generated at %s", jclOutPath)
+			logCtx.Info().Str("output_path", jclOutPath).Msg("✓ JCL generated")
 		} else {
-			deckJobLogger.Info().Msgf("Skipping JCL compilation (--no-compile).")
+			logCtx.Info().Msgf("Skipping JCL compilation (--no-compile).")
 		}
 
 		// --- Upload files (conditional) ---
@@ -104,12 +137,17 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.JCL); err != nil {
 				return err
 			}
-			if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.SRC); err != nil {
-				return err
+
+			// Check SRC PDS only if needed by this job
+			if job.Source != "" {
+				if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.SRC); err != nil {
+					return err
+				}
 			}
 
 			// --- Upload JCL ---
 			if _, err := os.Stat(jclOutPath); err != nil {
+				logCtx.Error().Err(err).Str("path", jclOutPath).Msg("JCL file not found for upload")
 				if noCompile {
 					return fmt.Errorf("cannot upload JCL for job %q: file %s does not exist and --no-compile was specified", job.Name, jclOutPath)
 				} else {
@@ -117,20 +155,21 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 				}
 			}
 
-			target := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, jobNameUpper)
-			jclUploadRes, err := zowe.UploadFileToDataset(ctx, jclOutPath, target)
+			logCtx.Info().Str("target_member", jobNameUpper).Msg("Uploading JCL deck...")
+
+			targetJCL := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, jobNameUpper)
+			jclUploadRes, err := zowe.UploadFileToDataset(ctx, jclOutPath, targetJCL)
 			if err != nil {
-				return fmt.Errorf("failed to upload JCL %s to %s: %w", jclOutPath, target, err)
+				return fmt.Errorf("failed to upload JCL %s to %s: %w", jclOutPath, targetJCL, err)
 			}
 
-			log.Info().Str("job", job.Name).Msg("✓ JCL deck uploaded")
+			logCtx.Info().Str("target", targetJCL).Msg("✓ JCL deck uploaded")
 			if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
-				deckJobLogger.Debug().Msgf("  From: %s", jclUploadRes.Data.APIResponse[0].From)
-				deckJobLogger.Debug().Msgf("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
+				logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("JCL upload details")
 			}
 
 			// --- Upload COBOL source ---
-			if job.Source != "" {
+			if job.Step == "execute" && job.Source != "" {
 
 				// Construct path to COBOL file
 				srcMember := fmt.Sprintf("%s(%s)", graceCfg.Datasets.SRC, jobNameUpper)
@@ -138,24 +177,25 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 				srcPath := filepath.Join("src", job.Source)
 				_, err = os.Stat(srcPath)
 				if err != nil {
+					logCtx.Error().Err(err).Str("path", srcPath).Msg("COBOL source upload failed")
 					return fmt.Errorf("unable to resolve COBOL source file %s for job %s", srcPath, job.Name)
 				}
 
 				cobolUploadRes, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
 				if err != nil {
+					logCtx.Error().Err(err).Str("target", srcMember).Msg("COBOL source upload failed")
 					return fmt.Errorf("COBOL source upload to %s failed for job %s: %w\n", srcMember, job.Name, err)
 				}
 
-				log.Info().Str("job_name", job.Name).Msgf("✓ COBOL data set %s submitted", job.Source)
+				log.Info().Str("source_file", job.Source).Str("target", srcMember).Msg("✓ COBOL data set uploaded")
 				if cobolUploadRes != nil && cobolUploadRes.Data.Success && len(cobolUploadRes.Data.APIResponse) > 0 {
-					deckJobLogger.Debug().Msgf("  From: %s", jclUploadRes.Data.APIResponse[0].From)
-					deckJobLogger.Debug().Msgf("  To:   %s", jclUploadRes.Data.APIResponse[0].To)
+					logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("COBOL upload details")
 				}
 			} else {
-				deckJobLogger.Info().Msg("Skipping COBOL source upload (no source defined).")
+				logCtx.Debug().Msg("Skipping COBOL source upload (no source defined).")
 			}
 		} else {
-			deckJobLogger.Info().Msg("Skipping uploads (--no-upload).")
+			logCtx.Info().Msg("Skipping uploads (--no-upload).")
 		}
 
 	}

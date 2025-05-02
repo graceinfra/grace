@@ -3,20 +3,36 @@ config:
   concurrency: 3
 
 datasets:
-  jcl: Z71405.HELLO.GRC.JCL
-  src: Z71405.HELLO.GRC.SRC
-  loadlib: Z71405.LOAD
+  jcl: IBMUSER.HELLO.GRC.JCL
+  src: IBMUSER.HELLO.GRC.SRC
+  loadlib: IBMUSER.LOAD
 
 jobs:
-  - name: hello
-    step: execute
-    source: hello.cbl
+  - name: compile-hello
+    step: compile
+    inputs:
+      - name: sysin
+        path: src://hello.cbl
+      # optional: add SYSLIB if copybooks are needed
+      # - name: syslib
+      #   path: zos://USER.COBOL.COPYLIB
+      #   object deck goes out via SYSLIN DD
+    outputs:
+      - name: syslin
+        path: temp://hello.obj
+      # Optional: Add DCB/SPACE if needed for object deck dataset
+      # Optional: Capture compiler listing
+      # - name: sysprint
+      #   path: temp://compile-hello.list
 
-  - name: hello2
-    step: execute
-    source: hello.cbl
+  - name: link-hello
+    step: linkedit
+    depends_on: [link-hello]
+    inputs:
+      - name: syslin
+        path: temp://hello.obj
 
-  - name: hello3
+
+  - name: run-hello
     step: execute
-    source: hello.cbl
-    depends_on: [hello, hello2]
+    depends_on: [link-hello]

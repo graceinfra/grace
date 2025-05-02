@@ -1,9 +1,8 @@
-//{{ .JobName }} JOB (ACCT),'{{ .JobName }}',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
-//STEP1    EXEC IGYWCL
+//{{ .JobName }} JOB (ACCT),'{{ .JobName | ToUpper }}',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
+//STEP1    EXEC PGM={{ .ProgramName }}
 //COBOL.SYSIN DD DSN={{ .CobolDSN }},DISP=SHR
-//LKED.SYSLMOD DD DSN={{ .LoadLib }}({{ .JobName }}),DISP=SHR
-//STEP2    EXEC PGM={{ .JobName }},COND=(4,LT,STEP1.LKED)
 //STEPLIB  DD DSN={{ .LoadLib }},DISP=SHR
+{{ .DDStatements }}
 //SYSPRINT DD SYSOUT=*
 //SYSOUT   DD SYSOUT=*
 //SYSUDUMP DD SYSOUT=*

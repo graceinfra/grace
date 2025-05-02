@@ -1,0 +1,11 @@
+//{{ .JobName }} JOB (ACCT),'{{ .JobName | ToUpper }} - LINKEDIT',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
+//*
+//* GRACE GENERATED JCL FOR LINKEDIT STEP: {{ .JobName }}
+//* WORKFLOW ID: {{ .WorkflowId }}
+//*
+//LINKEDIT EXEC PGM=IEWL,PARM='LIST,MAP,XREF' {{- /* Common PARM options */}}
+{{ .DDStatements }}
+//SYSLMOD  DD DSN={{ .LoadLib }}({{ .ProgramName }}),DISP=SHR
+{{- /* Standard work datasets often needed by linker */}}
+//SYSUT1   DD UNIT=SYSDA,SPACE=(CYL,(1,1))
+//SYSPRINT DD SYSOUT=* {{- /* Linker messages */}}

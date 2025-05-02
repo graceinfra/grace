@@ -19,6 +19,11 @@ type Job struct {
 type FileSpec struct {
 	Name string `yaml:"name"`
 	Path string `yaml:"path"`
+
+	Space  string `yaml:"space,omitempty"`
+	DCB    string `yaml:"dcb,omitempty"`
+	DsType string `yaml:"ds_type,omitempty"`
+	Keep   bool   `yaml:"keep,omitempty"`
 }
 
 type JobResult interface {
