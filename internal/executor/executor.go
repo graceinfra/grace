@@ -407,33 +407,36 @@ func (e *Executor) executeJob(jobName string) {
 	} else {
 		status := finalResult.Data.Status
 		retCodeStr := "null"
-		isRcSuccess := true
+		isRcFailure := false
 
 		if finalResult.Data.RetCode != nil {
 			retCodeStr = *finalResult.Data.RetCode
-			if retCodeStr != "CC 0000" && retCodeStr != "CC 0004" && retCodeStr != "JCL ERROR" /* Also check JCL ERROR string */ {
-				// Consider codes like ABENDs (Sxxx, Uxxx) or high CCs here too if needed
-				isRcSuccess = false
-			}
-			// Also treat "JCL ERROR" retcode string explicitly as not successful RC
-			if retCodeStr == "JCL ERROR" {
-				isRcSuccess = false
+
+			// Check if the RC string itself indicates a failure type
+			if retCodeStr == "JCL ERROR" || // Explicitly check for JCL ERROR RC string
+				retCodeStr == "ABEND" || // Check for ABEND RC string (might include Sxxx/Uxxx)
+				retCodeStr == "FLUSHED" || // Jobs can be flushed
+
+				// Add other RC strings that always mean failure?
+				(retCodeStr != "CC 0000" && retCodeStr != "CC 0004") { // Check for non-success CCs
+				// Note: This condition might double-count "JCL ERROR", which is fine.
+				isRcFailure = true
 			}
 		}
 
-		// Determine success: Status must be OUTPUT and RC must be successful
-		if status == "OUTPUT" && isRcSuccess {
+		// Determine success: Status must be OUTPUT and RC must NOT indicate failure
+		if status == "OUTPUT" && !isRcFailure {
 			finalState = StateSucceeded
 			isSuccess = true
 			jobIdLogger.Info().Msgf("✓ Job completed: Status %s, RC %s", status, retCodeStr)
 		} else {
-			// Any other status OR OUTPUT with a non-success RC is treated as failure for state machine
+			// Any other status OR OUTPUT with a failure RC is treated as failure for state machine
 			finalState = StateFailed
 			isSuccess = false
 			if status != "OUTPUT" {
 				jobIdLogger.Warn().Msgf("Job finished with non-OUTPUT status: %s", status)
 			} else { // Status was OUTPUT, so RC must have been bad
-				jobIdLogger.Warn().Msgf("Job finished with OUTPUT status but non-success RC: %s", retCodeStr)
+				jobIdLogger.Warn().Msgf("Job finished with OUTPUT status but failure RC: %s", retCodeStr)
 			}
 		}
 	}
