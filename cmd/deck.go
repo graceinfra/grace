@@ -43,7 +43,7 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 
 		ctx := &context.ExecutionContext{
 			Config:     graceCfg,
-			SubmitOnly: submitOnly,
+			SubmitOnly: deckJobs,
 			GraceCmd:   "deck",
 		}
 
@@ -54,8 +54,5 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 
 		err = orch.DeckAndUpload(ctx, noCompile, noUpload)
 		cobra.CheckErr(err)
-
-		fmt.Println() // Newline
-		log.Info().Msg("✓ Deck and upload process completed successfully.")
 	},
 }
