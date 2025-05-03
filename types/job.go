@@ -3,8 +3,9 @@ package types
 type Job struct {
 	Name     string `yaml:"name"`
 	Step     string `yaml:"step"`
-	Source   string `yaml:"source,omitempty"`
 	Template string `yaml:"template,omitempty"`
+
+	Program *string `yaml:"program"`
 
 	Datasets *Datasets `yaml:"datasets,omitempty"`
 
@@ -12,7 +13,6 @@ type Job struct {
 	Overrides struct {
 		Compiler CompilerOverride `yaml:"compiler,omitempty"`
 		Linker   LinkerOverride   `yaml:"linker,omitempty"`
-		Program  ProgramOverride  `yaml:"program_omitempty"`
 	} `yaml:"overrides,omitempty"`
 
 	DependsOn []string `yaml:"depends_on,omitempty"`
@@ -34,10 +34,6 @@ type LinkerOverride struct {
 	Pgm     *string `yaml:"pgm,omitempty"`
 	Parms   *string `yaml:"parms,omitempty"`
 	StepLib *string `yaml:"steplib,omitempty"`
-}
-
-type ProgramOverride struct {
-	Name *string `yaml:"name,omitempty"`
 }
 
 type FileSpec struct {

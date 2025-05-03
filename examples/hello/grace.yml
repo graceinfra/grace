@@ -1,6 +1,15 @@
 config:
   profile: zosmf
   concurrency: 3
+  defaults:
+    compiler:
+      pgm: IGYCRCTL
+      parms: 'OBJECT,NODECK,LIB'
+      steplib: IGY.V6R4M0.SIGYCOMP
+    linker:
+      pgm: IEWL
+      parms: 'LIST,MAP,XREF'
+      # steplib: optional - only if linker isn't in system LNKLST
 
 datasets:
   jcl: IBMUSER.HELLO.GRC.JCL
@@ -8,31 +17,25 @@ datasets:
   loadlib: IBMUSER.LOAD
 
 jobs:
-  - name: cmphello
+  - name: CMPHELLO
     step: compile
     inputs:
       - name: SYSIN
         path: src://hello.cbl
-      # optional: add SYSLIB if copybooks are needed
-      # - name: syslib
-      #   path: zos://USER.COBOL.COPYLIB
-      #   object deck goes out via SYSLIN DD
     outputs:
       - name: SYSLIN
         path: temp://hello.obj
-      # Optional: Add DCB/SPACE if needed for object deck dataset
-      # Optional: Capture compiler listing
-      # - name: sysprint
-      #   path: temp://compile-hello.list
 
-  - name: lnkhello
+  - name: LNKHELLO
     step: linkedit
-    depends_on: [cmphello]
+    depends_on: [CMPHELLO]
+    program: HELLO
     inputs:
-      - name: syslin
+      - name: SYSLIN
         path: temp://hello.obj
 
 
-  - name: runhello
+  - name: RUNHELLO
     step: execute
-    depends_on: [lnkhello]
+    program: HELLO
+    depends_on: [LNKHELLO]

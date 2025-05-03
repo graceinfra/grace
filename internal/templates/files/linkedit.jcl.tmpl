@@ -1,5 +1,8 @@
-//{{ .JobName | ToUpper }} JOB (ACCT),'{{ .JobName | ToUpper }}',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
-//LINKEDIT EXEC PGM=IEWL,PARM='LIST,MAP,XREF'
+//{{ .JobName | ToUpper }} JOB (ACCT),'GRC LINK',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
+//LINKEDIT EXEC PGM={{ .LinkerPgm }},PARM='{{ .LinkerParms }}',REGION=0M
+{{- if .LinkerSteplib }}
+//STEPLIB  DD DSN={{ .LinkerSteplib }},DISP=SHR
+{{- end }}
 {{ .DDStatements }}
 //SYSLMOD  DD DSN={{ .LoadLib }}({{ .ProgramName }}),DISP=SHR
 //SYSUT1   DD UNIT=SYSDA,SPACE=(CYL,(1,1))

@@ -1,5 +1,5 @@
-//{{ .JobName | ToUpper }} JOB (ACCT),'{{ .JobName | ToUpper }}',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
-//STEP1    EXEC PGM={{ .ProgramName }}
+//{{ .JobName | ToUpper }} JOB (ACCT),'GRC EXEC',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
+//STEP1    EXEC PGM={{ .ProgramName }},REGION=0M
 //STEPLIB  DD DSN={{ .LoadLib }},DISP=SHR
 {{ .DDStatements }}
 //SYSPRINT DD SYSOUT=*

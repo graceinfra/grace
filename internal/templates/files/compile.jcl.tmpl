@@ -1,6 +1,10 @@
-//{{ .JobName | ToUpper }} JOB (ACCT),'{{ .JobName | ToUpper }}',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
-//COMPILE  EXEC PGM=IGYCRCTL,PARM='OBJECT,NODECK,LIB'
+//{{ .JobName | ToUpper }} JOB (ACCT),'GRC COMP',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
+//COMPILE  EXEC PGM={{ .CompilerPgm }},PARM='{{ .CompilerParms }}',REGION=0M
+{{- if .CompilerSteplib }}
+//STEPLIB  DD DSN={{ .CompilerSteplib }},DISP=SHR
+{{- end }}
 {{ .DDStatements }}
+//SYSPRINT DD SYSOUT=*
 //WKUT1   DD UNIT=SYSDA,SPACE=(CYL,(1,1))
 //WKUT2   DD UNIT=SYSDA,SPACE=(CYL,(1,1))
 //WKUT3   DD UNIT=SYSDA,SPACE=(CYL,(1,1))

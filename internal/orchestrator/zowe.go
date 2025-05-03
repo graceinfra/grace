@@ -96,12 +96,12 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 				templatePath = job.Template
 			} else if step != "" {
 				switch step {
-				case "execute":
-					templatePath = "files/execute.jcl.tmpl"
 				case "compile":
 					templatePath = "files/compile.jcl.tmpl"
 				case "linkedit":
 					templatePath = "files/linkedit.jcl.tmpl"
+				case "execute":
+					templatePath = "files/execute.jcl.tmpl"
 				default:
 					logCtx.Error().Str("step", step).Msg("Unsupported step type")
 					return fmt.Errorf("unsupported step type %q for job %q", step, job.Name)
@@ -120,13 +120,27 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			}
 
 			// --- Prepare template data ---
+			programName := config.ResolveProgramName(job, graceCfg) // Used for PGM= or member name
+			compilerPgm := config.ResolveCompilerPgm(job, graceCfg)
+			compilerParms := config.ResolveCompilerParms(job, graceCfg)
+			compilerSteplib := config.ResolveCompilerSteplib(job, graceCfg)
+			linkerPgm := config.ResolveLinkerPgm(job, graceCfg)
+			linkerParms := config.ResolveLinkerParms(job, graceCfg)
+			linkerSteplib := config.ResolveLinkerSteplib(job, graceCfg)
+			loadLib := config.ResolveLoadLib(job, graceCfg) // Get potentially overridden loadlib
 
 			data := map[string]string{
-				"JobName":      job.Name, // Template applies ToUpper internally
-				"WorkflowId":   "DECK-RUN",
-				"ProgramName":  jobNameUpper, // TODO: for now we just assume program name matches job name
-				"LoadLib":      graceCfg.Datasets.LoadLib,
-				"DDStatements": ddStatements,
+				"JobName":         job.Name,
+				"WorkflowId":      "DECK-RUN",
+				"ProgramName":     programName, // Resolved program name
+				"LoadLib":         loadLib,     // Resolved load library
+				"CompilerPgm":     compilerPgm,
+				"CompilerParms":   compilerParms,
+				"CompilerSteplib": compilerSteplib, // Pass resolved value (might be "")
+				"LinkerPgm":       linkerPgm,
+				"LinkerParms":     linkerParms,
+				"LinkerSteplib":   linkerSteplib, // Pass resolved value (might be "")
+				"DDStatements":    ddStatements,
 			}
 
 			funcMap := template.FuncMap{
@@ -148,13 +162,6 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			// Ensure PDS exist for JCL and COBOL
 			if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.JCL); err != nil {
 				return err
-			}
-
-			// Check SRC PDS only if needed by this job
-			if job.Source != "" {
-				if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.SRC); err != nil {
-					return err
-				}
 			}
 
 			// --- Upload JCL ---
@@ -181,31 +188,37 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			}
 
 			// --- Upload COBOL source ---
-			if job.Step == "execute" && job.Source != "" {
 
-				// Construct path to COBOL file
-				srcMember := fmt.Sprintf("%s(%s)", graceCfg.Datasets.SRC, jobNameUpper)
+			// execute should always get source via //SYSIN DD from 'inputs' field. can revisit
+			// assumed to be referenced via input (src://) for compile steps, or pre-exist for execute steps.
+			// grace deck primarily handles JCL now
+			// TODO
 
-				srcPath := filepath.Join("src", job.Source)
-				_, err = os.Stat(srcPath)
-				if err != nil {
-					logCtx.Error().Err(err).Str("path", srcPath).Msg("COBOL source upload failed")
-					return fmt.Errorf("unable to resolve COBOL source file %s for job %s", srcPath, job.Name)
-				}
-
-				cobolUploadRes, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
-				if err != nil {
-					logCtx.Error().Err(err).Str("target", srcMember).Msg("COBOL source upload failed")
-					return fmt.Errorf("COBOL source upload to %s failed for job %s: %w\n", srcMember, job.Name, err)
-				}
-
-				log.Info().Str("source_file", job.Source).Str("target", srcMember).Msg("✓ COBOL data set uploaded")
-				if cobolUploadRes != nil && cobolUploadRes.Data.Success && len(cobolUploadRes.Data.APIResponse) > 0 {
-					logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("COBOL upload details")
-				}
-			} else {
-				logCtx.Debug().Msg("Skipping COBOL source upload (no source defined).")
-			}
+			// if job.Step == "execute" {
+			//
+			// 	// Construct path to COBOL file
+			// 	srcMember := fmt.Sprintf("%s(%s)", graceCfg.Datasets.SRC, jobNameUpper)
+			//
+			// 	srcPath := filepath.Join("src", job.Source)
+			// 	_, err = os.Stat(srcPath)
+			// 	if err != nil {
+			// 		logCtx.Error().Err(err).Str("path", srcPath).Msg("COBOL source upload failed")
+			// 		return fmt.Errorf("unable to resolve COBOL source file %s for job %s", srcPath, job.Name)
+			// 	}
+			//
+			// 	cobolUploadRes, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
+			// 	if err != nil {
+			// 		logCtx.Error().Err(err).Str("target", srcMember).Msg("COBOL source upload failed")
+			// 		return fmt.Errorf("COBOL source upload to %s failed for job %s: %w\n", srcMember, job.Name, err)
+			// 	}
+			//
+			// 	log.Info().Str("source_file", job.Source).Str("target", srcMember).Msg("✓ COBOL data set uploaded")
+			// 	if cobolUploadRes != nil && cobolUploadRes.Data.Success && len(cobolUploadRes.Data.APIResponse) > 0 {
+			// 		logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("COBOL upload details")
+			// 	}
+			// } else {
+			// 	logCtx.Debug().Msg("Skipping COBOL source upload (no source defined).")
+			// }
 		} else {
 			logCtx.Info().Msg("Skipping uploads (--no-upload).")
 		}

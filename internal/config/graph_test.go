@@ -22,7 +22,9 @@ func TestBuildJobGraph(t *testing.T) {
 		job := &types.Job{
 			Name:   "JOB1",
 			Step:   "execute",
-			Source: "src/job1.jcl",
+			Inputs: []types.FileSpec{
+				{Name: "SYSIN", Path: "src://job1.jcl"},
+			},
 		}
 
 		cfg := &types.GraceConfig{
@@ -42,18 +44,24 @@ func TestBuildJobGraph(t *testing.T) {
 		job1 := &types.Job{
 			Name:   "JOB1",
 			Step:   "execute",
-			Source: "src/job1.jcl",
+			Inputs: []types.FileSpec{
+				{Name: "SYSIN", Path: "src://job1.jcl"},
+			},
 		}
 		job2 := &types.Job{
 			Name:      "JOB2",
 			Step:      "execute",
-			Source:    "src/job2.jcl",
+			Inputs: []types.FileSpec{
+				{Name: "SYSIN", Path: "src://job2.jcl"},
+			},
 			DependsOn: []string{"JOB1"},
 		}
 		job3 := &types.Job{
 			Name:      "JOB3",
 			Step:      "execute",
-			Source:    "src/job3.jcl",
+			Inputs: []types.FileSpec{
+				{Name: "SYSIN", Path: "src://job3.jcl"},
+			},
 			DependsOn: []string{"JOB2"},
 		}
 
@@ -86,17 +94,23 @@ func TestBuildJobGraph(t *testing.T) {
 		job1 := &types.Job{
 			Name:   "JOB1",
 			Step:   "execute",
-			Source: "src/job1.jcl",
+			Inputs: []types.FileSpec{
+				{Name: "SYSIN", Path: "src://job1.jcl"},
+			},
 		}
 		job2 := &types.Job{
 			Name:   "JOB2",
 			Step:   "execute",
-			Source: "src/job2.jcl",
+			Inputs: []types.FileSpec{
+				{Name: "SYSIN", Path: "src://job2.jcl"},
+			},
 		}
 		job3 := &types.Job{
 			Name:      "JOB3",
 			Step:      "execute",
-			Source:    "src/job3.jcl",
+			Inputs: []types.FileSpec{
+				{Name: "SYSIN", Path: "src://job3.jcl"},
+			},
 			DependsOn: []string{"JOB1", "JOB2"},
 		}
 
@@ -130,10 +144,18 @@ func TestBuildJobGraph(t *testing.T) {
 		//   ^       ^
 		//   |       |
 		//   +- JOB3 -+
-		job1 := &types.Job{Name: "JOB1", Step: "execute", Source: "src/job1.jcl"}
-		job2 := &types.Job{Name: "JOB2", Step: "execute", Source: "src/job2.jcl", DependsOn: []string{"JOB1"}}
-		job3 := &types.Job{Name: "JOB3", Step: "execute", Source: "src/job3.jcl", DependsOn: []string{"JOB1"}}
-		job4 := &types.Job{Name: "JOB4", Step: "execute", Source: "src/job4.jcl", DependsOn: []string{"JOB2", "JOB3"}}
+		job1 := &types.Job{Name: "JOB1", Step: "execute", Inputs: []types.FileSpec{
+			{Name: "SYSIN", Path: "src://job1.jcl"},
+		}}
+		job2 := &types.Job{Name: "JOB2", Step: "execute", Inputs: []types.FileSpec{
+			{Name: "SYSIN", Path: "src://job2.jcl"},
+		}, DependsOn: []string{"JOB1"}}
+		job3 := &types.Job{Name: "JOB3", Step: "execute", Inputs: []types.FileSpec{
+			{Name: "SYSIN", Path: "src://job3.jcl"},
+		}, DependsOn: []string{"JOB1"}}
+		job4 := &types.Job{Name: "JOB4", Step: "execute", Inputs: []types.FileSpec{
+			{Name: "SYSIN", Path: "src://job4.jcl"},
+		}, DependsOn: []string{"JOB2", "JOB3"}}
 
 		cfg := &types.GraceConfig{
 			Jobs: []*types.Job{job1, job2, job3, job4},

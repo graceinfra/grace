@@ -126,6 +126,7 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 	}
 
 	// --- Validate 'datasets' section ---
+
 	if cfg.Datasets.JCL == "" {
 		errs = append(errs, "field 'datasets.jcl' is required")
 	} else {
@@ -133,7 +134,6 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			errs = append(errs, fmt.Sprintf("datasets.jcl: %v", err))
 		}
 	}
-
 	if cfg.Datasets.SRC == "" {
 		errs = append(errs, "field 'datasets.src' is required")
 	} else {
@@ -141,7 +141,6 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			errs = append(errs, fmt.Sprintf("datasets.src: %v", err))
 		}
 	}
-
 	if cfg.Datasets.LoadLib == "" {
 		errs = append(errs, "field 'datasets.loadlib' is required")
 	} else {
@@ -151,6 +150,7 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 	}
 
 	// --- Validate 'jobs' section ---
+
 	if len(cfg.Jobs) == 0 {
 		errs = append(errs, "at least one job must be defined under the 'jobs' list")
 	}
@@ -186,6 +186,101 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 		} else if !allowedSteps[job.Step] { // Check against allowed steps
 			allowed := getAllowedStepKeys(allowedSteps)
 			errs = append(errs, fmt.Sprintf("%s: invalid step %q; allowed steps are: %v", jobCtx, job.Step, allowed))
+		}
+
+		// Validate step specific requirements
+		switch job.Step {
+		case "compile":
+			if len(job.Inputs) == 0 {
+				errs = append(errs, fmt.Sprintf("%s: job requires at least one input (e.g. SYSIN) for step 'compile'", jobCtx))
+			}
+			if len(job.Outputs) == 0 {
+				errs = append(errs, fmt.Sprintf("%s: job requires at least one output (e.g. SYSLIN) for step 'compile'", jobCtx))
+			}
+		case "linkedit":
+			if len(job.Inputs) == 0 {
+				errs = append(errs, fmt.Sprintf("%s: job requires at least one input (e.g. SYSLIN) for step 'linkedit'", jobCtx))
+			}
+
+			// Check if loadlib is defined either globally or locally
+			if cfg.Datasets.LoadLib == "" && (job.Datasets == nil || job.Datasets.LoadLib == "") {
+				errs = append(errs, fmt.Sprintf("%s: step 'linkedit' requires 'datasets.loadlib' to be defined either globally or for the job", jobCtx))
+			}
+
+			if job.Program == nil || *job.Program == "" {
+				errs = append(errs, fmt.Sprintf("%s: step 'execute' requires 'overrides.program.name' to specify the program to execute", jobCtx))
+			} else if err := utils.ValidatePDSMemberName(*job.Program); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: invalid 'overrides.program.name' for use as PGM name: %v", jobCtx, err))
+			}
+
+			if cfg.Datasets.LoadLib == "" && (job.Datasets == nil || job.Datasets.LoadLib == "") {
+				errs = append(errs, fmt.Sprintf("%s: step 'execute' requires 'datasets.loadlib' to be defined for STEPLIB", jobCtx))
+			}
+		}
+
+		// Validate job.Datasets
+		if job.Datasets != nil {
+			dsCtx := fmt.Sprintf("%s datasets override:", jobCtx)
+			if job.Datasets.JCL != "" {
+				if err := utils.ValidateDataSetQualifiers(job.Datasets.JCL); err != nil {
+					errs = append(errs, fmt.Sprintf("%s jcl: %v", dsCtx, err))
+				}
+			}
+			if job.Datasets.SRC != "" {
+				if err := utils.ValidateDataSetQualifiers(job.Datasets.SRC); err != nil {
+					errs = append(errs, fmt.Sprintf("%s src: %v", dsCtx, err))
+				}
+			}
+			if job.Datasets.LoadLib != "" {
+				if err := utils.ValidateDataSetQualifiers(job.Datasets.LoadLib); err != nil {
+					errs = append(errs, fmt.Sprintf("%s loadlib: %v", dsCtx, err))
+				}
+			}
+		}
+
+		// Validate toolchain overrides (if present)
+		overrideCtx := fmt.Sprintf("%s overrides:", jobCtx)
+		if job.Overrides.Compiler.Pgm != nil {
+			if *job.Overrides.Compiler.Pgm == "" {
+				errs = append(errs, fmt.Sprintf("%s compiler.pgm cannot be empty if provided", overrideCtx))
+			} else if err := utils.ValidateDataSetQualifiers(*job.Overrides.Compiler.Pgm); err != nil {
+				errs = append(errs, fmt.Sprintf("%s compiler.pgm: %v", overrideCtx, err))
+			}
+		}
+		if job.Overrides.Compiler.Parms != nil {
+			if *job.Overrides.Compiler.Parms == "" {
+				errs = append(errs, fmt.Sprintf("%s compiler.parms cannot be empty if provided", overrideCtx))
+			} else if err := utils.ValidateDataSetQualifiers(*job.Overrides.Compiler.Parms); err != nil {
+				errs = append(errs, fmt.Sprintf("%s compiler.parms: %v", overrideCtx, err))
+			}
+		}
+		if job.Overrides.Compiler.StepLib != nil {
+			if *job.Overrides.Compiler.StepLib == "" {
+				errs = append(errs, fmt.Sprintf("%s compiler.steplib cannot be empty if provided", overrideCtx))
+			} else if err := utils.ValidateDataSetQualifiers(*job.Overrides.Compiler.StepLib); err != nil {
+				errs = append(errs, fmt.Sprintf("%s compiler.steplib: %v", overrideCtx, err))
+			}
+		}
+		if job.Overrides.Linker.Pgm != nil {
+			if *job.Overrides.Linker.Pgm == "" {
+				errs = append(errs, fmt.Sprintf("%s linker.pgm cannot be empty if provided", overrideCtx))
+			} else if err := utils.ValidateDataSetQualifiers(*job.Overrides.Linker.Pgm); err != nil {
+				errs = append(errs, fmt.Sprintf("%s linker.pgm: %v", overrideCtx, err))
+			}
+		}
+		if job.Overrides.Linker.Parms != nil {
+			if *job.Overrides.Linker.Parms == "" {
+				errs = append(errs, fmt.Sprintf("%s linker.parms cannot be empty if provided", overrideCtx))
+			} else if err := utils.ValidateDataSetQualifiers(*job.Overrides.Linker.Parms); err != nil {
+				errs = append(errs, fmt.Sprintf("%s linker.parms: %v", overrideCtx, err))
+			}
+		}
+		if job.Overrides.Linker.StepLib != nil {
+			if *job.Overrides.Linker.StepLib == "" {
+				errs = append(errs, fmt.Sprintf("%s linker.steplib cannot be empty if provided", overrideCtx))
+			} else if err := utils.ValidateDataSetQualifiers(*job.Overrides.Linker.StepLib); err != nil {
+				errs = append(errs, fmt.Sprintf("%s linker.steplib: %v", overrideCtx, err))
+			}
 		}
 
 		// Validate job inputs

@@ -330,11 +330,23 @@ func (e *Executor) executeJob(jobName string) {
 		}
 	}
 
+	primarySourcePath := ""
+	if job.Step == "compile" {
+		for _, input := range job.Inputs {
+			// Conventionally, SYSIN is the primary source for compile
+			if strings.ToUpper(input.Name) == "SYSIN" {
+				primarySourcePath = input.Path // Use virtual path (e.g. "src://hello.cbl")
+				break
+			}
+		}
+	}
+	// TODO: add logic for other step types if they have a clear primary source
+
 	record := &models.JobExecutionRecord{
 		JobName:     job.Name,
-		JobID:       "SKIPPED",
+		JobID:       "PENDING_SUBMIT",
 		Step:        job.Step,
-		Source:      job.Source,
+		Source:      primarySourcePath,
 		GraceCmd:    e.ctx.GraceCmd,
 		ZoweProfile: e.ctx.Config.Config.Profile,
 		HLQ:         hlq,
@@ -516,7 +528,6 @@ func (e *Executor) collectFinalResults() []models.JobExecutionRecord {
 					JobName:     jobName,
 					JobID:       "SKIPPED",
 					Step:        node.Job.Step,
-					Source:      node.Job.Source,
 					GraceCmd:    e.ctx.GraceCmd,
 					ZoweProfile: e.ctx.Config.Config.Profile,
 					HLQ:         hlq,

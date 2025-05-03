@@ -84,7 +84,12 @@ func TestValidateGraceConfig(t *testing.T) {
 				c.Jobs = append(c.Jobs, &types.Job{
 					Name:   "job1", // Same as JOB1 but different case
 					Step:   "execute",
-					Source: "src/job2.jcl",
+					Inputs: []types.FileSpec{
+						{
+							Name: "SYSIN",
+							Path: "src://job2.jcl",
+						},
+					},
 				})
 			}),
 			shouldError: true,
@@ -101,18 +106,18 @@ func TestValidateGraceConfig(t *testing.T) {
 		{
 			name: "Invalid step",
 			config: modifyConfig(createValidConfig(), func(c *types.GraceConfig) {
-				c.Jobs[0].Step = "compile" // not in allowedSteps yet
+				c.Jobs[0].Step = "invalid_step" // not in allowedSteps
 			}),
 			shouldError: true,
 			errContains: "invalid step",
 		},
 		{
-			name: "Missing source for execute step",
+			name: "Missing inputs for execute step",
 			config: modifyConfig(createValidConfig(), func(c *types.GraceConfig) {
-				c.Jobs[0].Source = ""
+				c.Jobs[0].Inputs = nil
 			}),
 			shouldError: true,
-			errContains: "field 'source' is required for step 'execute'",
+			errContains: "job requires at least one input for step 'execute'",
 		},
 		{
 			name: "Self-dependency",
@@ -136,7 +141,9 @@ func TestValidateGraceConfig(t *testing.T) {
 				c.Jobs = append(c.Jobs, &types.Job{
 					Name:      "JOB2",
 					Step:      "execute",
-					Source:    "src/job2.jcl",
+					Inputs: []types.FileSpec{
+						{Name: "SYSIN", Path: "src://job2.jcl"},
+					},
 					DependsOn: []string{"JOB1"},
 				})
 				c.Jobs[0].DependsOn = []string{"JOB2"} // Creates a cycle
@@ -203,42 +210,53 @@ func TestValidateSyntax(t *testing.T) {
 
 func TestValidateDependenciesAndBuildGraph(t *testing.T) {
 	t.Run("Valid dependencies", func(t *testing.T) {
-		job1 := &types.Job{Name: "JOB1", Step: "execute", Source: "src/job1.jcl"}
-		job2 := &types.Job{Name: "JOB2", Step: "execute", Source: "src/job2.jcl", DependsOn: []string{"JOB1"}}
-		
+		job1 := &types.Job{Name: "JOB1", Step: "execute", Inputs: []types.FileSpec{
+			{Name: "SYSIN", Path: "src://job1.jcl"},
+		}}
+		job2 := &types.Job{Name: "JOB2", Step: "execute", Inputs: []types.FileSpec{
+			{Name: "SYSIN", Path: "src://job2.jcl"},
+		}, DependsOn: []string{"JOB1"}}
+
 		cfg := &types.GraceConfig{Jobs: []*types.Job{job1, job2}}
-		
+
 		jobMap := map[string]*types.Job{"JOB1": job1, "JOB2": job2}
 		jobGraph := map[string]*JobNode{"JOB1": {Job: job1}, "JOB2": {Job: job2}}
-		
-		errs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph)
+
+		producedPaths := make(map[string]string)
+		errs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph, producedPaths)
 		assert.Empty(t, errs)
-		
+
 		// Verify graph was built correctly
 		assert.Len(t, jobGraph["JOB2"].Dependencies, 1)
 		assert.Equal(t, "JOB1", jobGraph["JOB2"].Dependencies[0].Job.Name)
 	})
-	
+
 	t.Run("Missing dependency", func(t *testing.T) {
-		job1 := &types.Job{Name: "JOB1", Step: "execute", Source: "src/job1.jcl", DependsOn: []string{"NONEXISTENT"}}
-		
+		job1 := &types.Job{Name: "JOB1", Step: "execute", Inputs: []types.FileSpec{
+			{Name: "SYSIN", Path: "src://job1.jcl"},
+		}, DependsOn: []string{"NONEXISTENT"}}
+
 		cfg := &types.GraceConfig{Jobs: []*types.Job{job1}}
 		jobMap := map[string]*types.Job{"JOB1": job1}
 		jobGraph := map[string]*JobNode{"JOB1": {Job: job1}}
-		
-		errs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph)
+
+		producedPaths := make(map[string]string)
+		errs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph, producedPaths)
 		assert.NotEmpty(t, errs)
 		assert.Contains(t, errs[0], "dependency \"NONEXISTENT\" not found")
 	})
-	
+
 	t.Run("Self dependency", func(t *testing.T) {
-		job1 := &types.Job{Name: "JOB1", Step: "execute", Source: "src/job1.jcl", DependsOn: []string{"JOB1"}}
-		
+		job1 := &types.Job{Name: "JOB1", Step: "execute", Inputs: []types.FileSpec{
+			{Name: "SYSIN", Path: "src://job1.jcl"},
+		}, DependsOn: []string{"JOB1"}}
+
 		cfg := &types.GraceConfig{Jobs: []*types.Job{job1}}
 		jobMap := map[string]*types.Job{"JOB1": job1}
 		jobGraph := map[string]*JobNode{"JOB1": {Job: job1}}
-		
-		errs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph)
+
+		producedPaths := make(map[string]string)
+		errs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph, producedPaths)
 		assert.NotEmpty(t, errs)
 		assert.Contains(t, errs[0], "job cannot depend on itself")
 	})
@@ -250,76 +268,76 @@ func TestDetectCycle(t *testing.T) {
 		job1 := &types.Job{Name: "JOB1"}
 		job2 := &types.Job{Name: "JOB2"}
 		job3 := &types.Job{Name: "JOB3"}
-		
+
 		node1 := &JobNode{Job: job1}
 		node2 := &JobNode{Job: job2}
 		node3 := &JobNode{Job: job3}
-		
+
 		// JOB1 <- JOB2 <- JOB3 (dependency direction)
 		node2.Dependencies = []*JobNode{node1}
 		node1.Dependents = []*JobNode{node2}
-		
+
 		node3.Dependencies = []*JobNode{node2}
 		node2.Dependents = []*JobNode{node3}
-		
+
 		graph := map[string]*JobNode{
 			"JOB1": node1,
 			"JOB2": node2,
 			"JOB3": node3,
 		}
-		
+
 		cycle := detectCycle(graph)
 		assert.Nil(t, cycle)
 	})
-	
+
 	t.Run("Cycle exists", func(t *testing.T) {
 		// Create a patch for the detectCycle function to handle cycles correctly
-		
+
 		// Create a graph with a cycle:
 		// JOB1 -> JOB2 -> JOB3 -> JOB1
 		job1 := &types.Job{Name: "JOB1"}
 		job2 := &types.Job{Name: "JOB2"}
 		job3 := &types.Job{Name: "JOB3"}
-		
+
 		node1 := &JobNode{Job: job1}
 		node2 := &JobNode{Job: job2}
 		node3 := &JobNode{Job: job3}
-		
+
 		// Set up the cycle with proper dependencies and dependents:
 		// JOB1 depends on JOB3
 		node1.Dependencies = []*JobNode{node3}
-		node3.Dependents = []*JobNode{node1} 
-		
+		node3.Dependents = []*JobNode{node1}
+
 		// JOB2 depends on JOB1
 		node2.Dependencies = []*JobNode{node1}
 		node1.Dependents = []*JobNode{node2}
-		
+
 		// JOB3 depends on JOB2
 		node3.Dependencies = []*JobNode{node2}
 		node2.Dependents = []*JobNode{node3}
-		
+
 		graph := map[string]*JobNode{
 			"JOB1": node1,
 			"JOB2": node2,
 			"JOB3": node3,
 		}
-		
+
 		// Create a customized detectCycle function for testing
 		customDetectCycle := func(graph map[string]*JobNode) []string {
 			// The issue with the current function is that it's not handling recursionStack correctly
 			// Let's implement a simplified version for the test
 			visited := make(map[string]bool)
 			inStack := make(map[string]bool)
-			
+
 			var dfs func(string) []string
 			dfs = func(current string) []string {
 				visited[current] = true
 				inStack[current] = true
-				
+
 				node := graph[current]
 				for _, depNode := range node.Dependents {
 					dependent := depNode.Job.Name
-					
+
 					if !visited[dependent] {
 						if result := dfs(dependent); result != nil {
 							return append([]string{current}, result...)
@@ -329,11 +347,11 @@ func TestDetectCycle(t *testing.T) {
 						return []string{current, dependent}
 					}
 				}
-				
+
 				inStack[current] = false
 				return nil
 			}
-			
+
 			for name := range graph {
 				if !visited[name] {
 					if result := dfs(name); result != nil {
@@ -343,14 +361,14 @@ func TestDetectCycle(t *testing.T) {
 			}
 			return nil
 		}
-		
-		// Test with our custom implementation 
+
+		// Test with our custom implementation
 		cycle := customDetectCycle(graph)
 		assert.NotNil(t, cycle, "Expected to detect a cycle")
-		
+
 		// Test the actual implementation
 		// If it fails, we should investigate the detectCycle function
-		actualCycle := detectCycle(graph) 
+		actualCycle := detectCycle(graph)
 		assert.NotNil(t, actualCycle, "Expected the actual implementation to detect a cycle")
 	})
 }
@@ -361,9 +379,17 @@ func createValidConfig() *types.GraceConfig {
 		Config: struct {
 			Profile     string "yaml:\"profile\""
 			Concurrency int    "yaml:\"concurrency\""
+			Defaults    struct {
+				Compiler types.Compiler "yaml:\"compiler,omitempty\""
+				Linker   types.Linker   "yaml:\"linker,omitempty\""
+			} "yaml:\"defaults,omitempty\""
 		}{
 			Profile:     "MAINFRAME",
 			Concurrency: 2,
+			Defaults: struct {
+				Compiler types.Compiler "yaml:\"compiler,omitempty\""
+				Linker   types.Linker   "yaml:\"linker,omitempty\""
+			}{},
 		},
 		Datasets: struct {
 			JCL     string "yaml:\"jcl\""
@@ -376,9 +402,14 @@ func createValidConfig() *types.GraceConfig {
 		},
 		Jobs: []*types.Job{
 			{
-				Name:   "JOB1",
-				Step:   "execute",
-				Source: "src/job1.jcl",
+				Name: "JOB1",
+				Step: "execute",
+				Inputs: []types.FileSpec{
+					{
+						Name: "SYSIN",
+						Path: "src://job1.jcl",
+					},
+				},
 			},
 		},
 	}
@@ -388,22 +419,38 @@ func createValidConfig() *types.GraceConfig {
 func modifyConfig(config *types.GraceConfig, modifier func(*types.GraceConfig)) *types.GraceConfig {
 	// Create a shallow copy
 	newConfig := *config
-	
+
 	// Copy Jobs slice
 	if config.Jobs != nil {
 		newConfig.Jobs = make([]*types.Job, len(config.Jobs))
 		for i, job := range config.Jobs {
 			// Deep copy each job
 			newJob := *job
+			
+			// Deep copy DependsOn slice
 			if job.DependsOn != nil {
 				newJob.DependsOn = make([]string, len(job.DependsOn))
 				copy(newJob.DependsOn, job.DependsOn)
 			}
+			
+			// Deep copy Inputs slice
+			if job.Inputs != nil {
+				newJob.Inputs = make([]types.FileSpec, len(job.Inputs))
+				copy(newJob.Inputs, job.Inputs)
+			}
+			
+			// Deep copy Outputs slice
+			if job.Outputs != nil {
+				newJob.Outputs = make([]types.FileSpec, len(job.Outputs))
+				copy(newJob.Outputs, job.Outputs)
+			}
+			
 			newConfig.Jobs[i] = &newJob
 		}
 	}
-	
+
 	// Apply the modifier
 	modifier(&newConfig)
 	return &newConfig
 }
+

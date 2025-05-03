@@ -29,7 +29,7 @@ func GenerateDDStatements(job *types.Job, ctx *context.ExecutionContext) (string
 	for _, inputSpec := range job.Inputs {
 		logCtx.Debug().Str("dd_name", inputSpec.Name).Str("virtual_path", inputSpec.Path).Msg("Processing input")
 
-		dsn, err := paths.ResolvePath(ctx, inputSpec.Path)
+		dsn, err := paths.ResolvePath(ctx, job, inputSpec.Path)
 		if err != nil {
 			logCtx.Error().Err(err).Str("virtual_path", inputSpec.Path).Msg("Failed to resolve input path")
 			return "", fmt.Errorf("job %q input %q (%s): %w", job.Name, inputSpec.Name, inputSpec.Path, err)
@@ -48,7 +48,7 @@ func GenerateDDStatements(job *types.Job, ctx *context.ExecutionContext) (string
 
 	for _, outputSpec := range job.Outputs {
 		logCtx.Debug().Str("dd_name", outputSpec.Name).Str("virtual_path", outputSpec.Path).Msg("Processing output")
-		dsn, err := paths.ResolvePath(ctx, outputSpec.Path)
+		dsn, err := paths.ResolvePath(ctx, job, outputSpec.Path)
 		if err != nil {
 			// This shouldn't happen if PreresolveOutputPaths worked, indicates internal error
 			logCtx.Error().Err(err).Str("virtual_path", outputSpec.Path).Msg("Failed to resolve output path")

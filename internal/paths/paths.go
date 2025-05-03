@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/utils"
 	"github.com/graceinfra/grace/types"
@@ -92,7 +93,7 @@ func generateTempDSN_Idempotent(hlq string, spec types.FileSpec) (string, error)
 // ResolvePath retrieves the physical DSN/path for a given virtual path based on its scheme.
 // Assumes temp:// paths were pre-resolved and stored via InitializePaths.
 // Requires ExecutionContext to access configured datasets (like datasets.src).
-func ResolvePath(ctx *context.ExecutionContext, virtualPath string) (string, error) {
+func ResolvePath(ctx *context.ExecutionContext, job *types.Job, virtualPath string) (string, error) {
 	schemeEnd := strings.Index(virtualPath, "://")
 	if schemeEnd == -1 {
 		return "", fmt.Errorf("invalid virtual path format: missing '://' scheme separator in %q", virtualPath)
@@ -119,7 +120,7 @@ func ResolvePath(ctx *context.ExecutionContext, virtualPath string) (string, err
 
 	case "src":
 		// Resolve relative to the configured 'datasets.src' PDS
-		srcPDS := ctx.Config.Datasets.SRC
+		srcPDS := config.ResolveSRCDataset(job, ctx.Config)
 		if srcPDS == "" {
 			return "", fmt.Errorf("cannot resolve src:// path %q: datasets.src is not defined in grace.yml", virtualPath)
 		}
