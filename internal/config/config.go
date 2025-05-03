@@ -93,24 +93,6 @@ func ValidateGraceConfig(cfg *types.GraceConfig) error {
 
 	depErrs := validateDependenciesAndBuildGraph(cfg, jobMap, jobGraph, producedPaths)
 
-	// --- *** ADD DEBUG PRINTING HERE *** ---
-	// fmt.Println("--- DEBUG: Graph Structure before Cycle Check ---")
-	// for name, node := range jobGraph {
-	// 	fmt.Printf("Node: %s\n", name)
-	// 	depNames := []string{}
-	// 	for _, dep := range node.Dependencies {
-	// 		depNames = append(depNames, dep.Job.Name)
-	// 	}
-	// 	fmt.Printf("  Dependencies: %v\n", depNames)
-	// 	dependentNames := []string{}
-	// 	for _, dpt := range node.Dependents {
-	// 		dependentNames = append(dependentNames, dpt.Job.Name)
-	// 	}
-	// 	fmt.Printf("  Dependents: %v\n", dependentNames)
-	// }
-	// fmt.Println("--- END DEBUG ---")
-	// --- *** END DEBUG PRINTING *** ---
-
 	// --- Cycle detection ---
 
 	var cycleErrs []string
