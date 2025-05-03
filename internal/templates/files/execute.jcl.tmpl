@@ -1,6 +1,5 @@
-//{{ .JobName }} JOB (ACCT),'{{ .JobName | ToUpper }}',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
+//{{ .JobName | ToUpper }} JOB (ACCT),'{{ .JobName | ToUpper }}',CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
 //STEP1    EXEC PGM={{ .ProgramName }}
-//COBOL.SYSIN DD DSN={{ .CobolDSN }},DISP=SHR
 //STEPLIB  DD DSN={{ .LoadLib }},DISP=SHR
 {{ .DDStatements }}
 //SYSPRINT DD SYSOUT=*

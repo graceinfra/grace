@@ -74,15 +74,40 @@ func GenerateDDStatements(job *types.Job, ctx *context.ExecutionContext) (string
 
 		// Construct DD statement with allocation parameters
 		// Note: Formatting for continuation lines might be needed for very long DCB/SPACE
-		ddLine := fmt.Sprintf("//%-8s DD DSN=%s,DISP=%s,", ddName, dsn, disp)
-		ddLine += fmt.Sprintf("\n//             SPACE=%s,", space)
-		ddLine += fmt.Sprintf("\n//             DCB=%s", dcb)
+		line1 := fmt.Sprintf("//%-8s DD DSN=%s,DISP=%s,", ddName, dsn, disp)
+		line1 = padLineToContinuation(line1)
+		ddLines = append(ddLines, line1)
+
+		line2 := fmt.Sprintf("//             SPACE=%s,", space)
+		line2 = padLineToContinuation(line2)
+		ddLines = append(ddLines, line2)
+
+		line3 := fmt.Sprintf("//             DCB=%s", dcb)
+		// No continuation needed
+		ddLines = append(ddLines, line3)
+
 		// Add UNIT=SYSDA or similar? Often defaults ok. Add if needed.
 		// ddLine += ",\n//             UNIT=SYSDA"
 
-		ddLines = append(ddLines, ddLine)
 		logCtx.Debug().Str("dd_name", ddName).Str("dsn", dsn).Msg("Generated output DD")
 	}
 
 	return strings.Join(ddLines, "\n"), nil
+}
+
+// padLineToContinuation adds spaces to reach column 71 and adds a continuation char in col 72
+func padLineToContinuation(line string) string {
+	const targetCol = 71
+	const contChar = "*"
+
+	currentLen := len(line)
+	if currentLen < targetCol {
+		padding := strings.Repeat(" ", targetCol-currentLen)
+		return line + padding + contChar
+	} else if currentLen == targetCol {
+		return line + contChar
+	} else {
+		log.Warn().Str("line_content", line).Msg("JCL line exceeded column 71 before continuation mark could be added")
+		return line + contChar
+	}
 }

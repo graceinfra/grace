@@ -83,8 +83,6 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			logCtx = log.With().Str("job_name", job.Name).Logger()
 		}
 
-		fmt.Println() // Newline
-
 		// --- Compile JCL (conditional) ---
 		if !noCompile {
 			logCtx.Info().Msgf("Generating JCL -> %s", jclOutPath)
