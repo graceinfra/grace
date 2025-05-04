@@ -135,7 +135,7 @@ func UploadFileToDataset(ctx *context.ExecutionContext, path, member string) (*u
 
 	err = json.Unmarshal(out, &uploadRes)
 	if err != nil {
-		return nil, fmt.Errorf("Unexpected API response structure")
+		return nil, fmt.Errorf("unexpected API response structure")
 	}
 
 	if !uploadRes.Data.Success {
@@ -269,4 +269,16 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 	zoweLogger.Info().Msgf("Successfully allocated PDS %s", name)
 
 	return nil
+}
+
+func DeleteDatasetIfExists(ctx *context.ExecutionContext, dsn string) string {
+	quotedDsn := `"` + dsn + `"`
+
+	var outBuf bytes.Buffer
+	cmd := exec.Command("zowe", "files", "delete", "ds", quotedDsn, "-f", "--rfj")
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+	_ = cmd.Run()
+
+	return outBuf.String()
 }

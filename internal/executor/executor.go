@@ -11,6 +11,7 @@ import (
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/logging"
 	"github.com/graceinfra/grace/internal/models"
+	"github.com/graceinfra/grace/internal/paths"
 	"github.com/graceinfra/grace/internal/zowe"
 	"github.com/graceinfra/grace/types"
 	"github.com/rs/zerolog"
@@ -357,6 +358,19 @@ func (e *Executor) executeJob(jobName string) {
 		},
 		WorkflowId: e.ctx.WorkflowId,
 		SubmitTime: startTime.Format(time.RFC3339),
+	}
+
+	jobLogger.Info().Msg("Cleaning datasets ...")
+
+	for _, outputSpec := range job.Outputs {
+		if strings.Contains(outputSpec.Path, "temp://") {
+			dsn, err := paths.ResolvePath(e.ctx, job, outputSpec.Path)
+			if err != nil {
+				jobLogger.Error().Err(err).Str("path", outputSpec.Path).Msg("Error resolving path to temp:// dataset")
+			}
+			_ = zowe.DeleteDatasetIfExists(e.ctx, dsn)
+			jobLogger.Debug().Str("path", outputSpec.Path).Str("dsn", dsn).Msg("Delete data set operation")
+		}
 	}
 
 	// --- Submit job ---
