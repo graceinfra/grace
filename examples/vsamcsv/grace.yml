@@ -1,0 +1,44 @@
+config:
+  profile: zosmf
+  defaults:
+    compiler:
+      pgm: IGYCRCTL
+      steplib: IGY.V6R4M0.SIGYCOMP
+    linker:
+      pgm: IEWL
+      parms: 'LIST,MAP,XREF'
+
+datasets:
+  jcl: IBMUSER.VSAMCSV.GRC.JCL
+  src: IBMUSER.VSAMCSV.GRC.SRC
+  loadlib: IBMUSER.LOAD
+
+jobs:
+  - name: COMPILE
+    step: compile
+    inputs:
+      - name: SYSIN
+        path: src://vsamcsv.cbl
+    outputs:
+      - name: SYSLIN
+        path: temp://vsamcsv.obj
+
+  - name: LINK
+    step: linkedit
+    depends_on: [COMPILE]
+    program: VSAMCSV
+    inputs:
+      - name: SYSLIN
+        path: temp://vsamcsv.obj
+
+
+  - name: RUN
+    step: execute
+    depends_on: [LINK]
+    program: VSAMCSV
+    inputs:
+      - name: VSAMIN
+        path: zos://IBMUSER.VSAMDEMO.KSDS
+    outputs:
+      - name: CSVOUT
+        path: temp://vsam_extract.csv
