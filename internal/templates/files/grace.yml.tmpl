@@ -5,8 +5,3 @@ datasets:
   jcl: {{ .HLQ }}.{{ .WorkflowName }}.JCL
   src: {{ .HLQ }}.{{ .WorkflowName }}.SRC
   loadlib: {{ .HLQ }}.LOAD
-
-jobs:
-  - name: {{ .JobName }}
-    step: execute
-    source: {{ .JobName }}.cbl
