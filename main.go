@@ -65,7 +65,7 @@ func main() {
 		log.Info().Msgf("[Background Startup] Running background workflow %s", targetWorkflowId)
 		cmd.RunBackgroundWorkflow(targetWorkflowId, targetCfgPath, targetLogDir, targetOnlyFilter)
 	} else {
-		log.Info().Msg("Starting Grace CLI command execution")
+		log.Debug().Msg("Starting Grace CLI command execution")
 		cmd.Execute()
 	}
 }

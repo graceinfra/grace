@@ -68,7 +68,7 @@ func ValidateGraceConfig(cfg *types.GraceConfig) error {
 	producedPaths := make(map[string]string) // virtual path -> name of producing job
 
 	if len(syntaxErrs) != 0 {
-		return errors.New("Grace configuration validation failed:\n- " + strings.Join(syntaxErrs, "\n- "))
+		return errors.New(strings.Join(syntaxErrs, "\n- "))
 	}
 
 	for _, job := range cfg.Jobs {
@@ -86,7 +86,7 @@ func ValidateGraceConfig(cfg *types.GraceConfig) error {
 	}
 
 	if len(syntaxErrs) != 0 {
-		return errors.New("Grace configuration validation failed:\n- " + strings.Join(syntaxErrs, "\n- "))
+		return errors.New(strings.Join(syntaxErrs, "\n- "))
 	}
 
 	// --- Validate dependencies & build graph links ---
@@ -106,7 +106,7 @@ func ValidateGraceConfig(cfg *types.GraceConfig) error {
 
 	allErrs := append(append(syntaxErrs, depErrs...), cycleErrs...)
 	if len(allErrs) > 0 {
-		return errors.New("Grace configuration validation failed:\n- " + strings.Join(allErrs, "\n- "))
+		return errors.New(strings.Join(allErrs, "\n- "))
 	}
 
 	return nil
@@ -308,9 +308,10 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			} else {
 				isTemp := strings.HasPrefix(inputSpec.Path, "temp://")
 				isSrc := strings.HasPrefix(inputSpec.Path, "src://")
+				isZos := strings.HasPrefix(inputSpec.Path, "zos://")
 
-				if !isTemp && !isSrc {
-					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q (only temp:// allowed for now)", inputCtx, inputSpec.Path))
+				if !isTemp && !isSrc && !isZos {
+					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q", inputCtx, inputSpec.Path))
 				}
 			}
 		}
@@ -342,9 +343,10 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			} else {
 				isTemp := strings.HasPrefix(outputSpec.Path, "temp://")
 				isSrc := strings.HasPrefix(outputSpec.Path, "src://")
+				isZos := strings.HasPrefix(outputSpec.Path, "zos://")
 
-				if !isTemp && !isSrc {
-					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q (only temp:// allowed for now)", outputCtx, outputSpec.Path))
+				if !isTemp && !isSrc && !isZos {
+					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q", outputCtx, outputSpec.Path))
 				}
 			}
 		}

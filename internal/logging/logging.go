@@ -70,11 +70,11 @@ func ConfigureGlobalLogger(isVerbose bool, logFilePath string) error {
 
 	// --- Log confirmation ---
 	if isLoggingToFile {
-		globallog.Info().Msgf("Configured file logging (JSON format) to: %s", logFilePath)
-		globallog.Info().Msgf("File log level set to: %s", logLevel) // Reflects Debug
+		globallog.Debug().Msgf("Configured file logging (JSON format) to: %s", logFilePath)
+		globallog.Debug().Msgf("File log level set to: %s", logLevel) // Reflects Debug
 	} else {
-		globallog.Info().Msg("Configured console logging.")
-		globallog.Info().Msgf("Console log level set to: %s", logLevel) // Reflects Info or Debug
+		globallog.Debug().Msg("Configured console logging.")
+		globallog.Debug().Msgf("Console log level set to: %s", logLevel) // Reflects Info or Debug
 	}
 	return nil
 }
