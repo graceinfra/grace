@@ -65,6 +65,10 @@ func ConfigureGlobalLogger(isVerbose bool, logFilePath string) error {
 		globallog.Logger = zerolog.New(outputWriter).With().Timestamp().Logger()
 	}
 
+	if isVerbose {
+		logLevel = zerolog.DebugLevel
+	}
+
 	zerolog.SetGlobalLevel(logLevel)
 	zerolog.TimeFieldFormat = time.RFC3339
 

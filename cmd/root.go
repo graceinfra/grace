@@ -11,18 +11,25 @@ var (
 	Verbose bool
 
 	// Internal flags, hidden from user help
-	internalRun  bool
-	workflowId   string
-	cfgPath      string
-	internalOnly []string // For --only flag passed to bg process
+	internalRun    bool
+	workflowId     string
+	cfgPath        string
+	logDirInternal string
+	internalOnly   []string // For --only flag passed to bg process
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "grace",
-	Short: "Grace is a modern IaC and COBOL developer experience",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Grace CLI: mainframe automation, reborn.")
-	},
+	Short: "Grace is a declarative mainframe workflow orchestration engine",
+	// PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+	// 	err := logging.ConfigureGlobalLogger(Verbose, "")
+	// 	if err != nil {
+	// 		fmt.Fprintf(os.Stderr, "Failed to configure logger: %v\n", err)
+	// 		return err
+	// 	}
+	// 	log.Debug().Msg("Logger configured by PersistentPreRunE for consol output")
+	// 	return nil
+	// },
 }
 
 func init() {
@@ -31,8 +38,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&internalRun, "internal-run", false, "Internal flag to trigger background workflow execution")
 	rootCmd.PersistentFlags().StringVar(&workflowId, "workflow-id", "", "Internal flag for background workflow ID")
 	rootCmd.PersistentFlags().StringVar(&cfgPath, "cfg-path", "grace.yml", "Internal flag for background workflow config path")
-	rootCmd.PersistentFlags().StringVar(&cfgPath, "log-dir", "", "Internal flag for background workflow log directory path")
-	rootCmd.PersistentFlags().StringSliceVar(&internalOnly, "only", nil, "Internal flag mirroring --only for background process") // Re-define --only for internal use
+	rootCmd.PersistentFlags().StringVar(&logDirInternal, "log-dir", "", "Internal flag for background workflow log directory path")
+	rootCmd.PersistentFlags().StringSliceVar(&internalOnly, "only", nil, "Internal flag mirroring --only for background process") // Redefine --only for internal use
 
 	// Hide internal flags from help output
 	_ = rootCmd.PersistentFlags().MarkHidden("internal-run")
