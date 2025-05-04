@@ -3,6 +3,8 @@
 {{- if .LinkerSteplib }}
 //STEPLIB  DD DSN={{ .LinkerSteplib }},DISP=SHR
 {{- end }}
+//SYSLIB   DD DSN=CEE.SCEELKED,DISP=SHR
+//         DD DSN=IGY.V6R4M0.SIGYLIB,DISP=SHR
 {{ .DDStatements }}
 //SYSLMOD  DD DSN={{ .LoadLib }}({{ .ProgramName }}),DISP=SHR
 //SYSUT1   DD UNIT=SYSDA,SPACE=(CYL,(1,1))
