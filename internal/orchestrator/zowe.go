@@ -19,6 +19,7 @@ import (
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/paths"
 	grctemplate "github.com/graceinfra/grace/internal/templates"
+	"github.com/graceinfra/grace/internal/utils"
 	"github.com/graceinfra/grace/internal/zowe"
 )
 
@@ -162,6 +163,65 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			// Ensure PDS exist for JCL and COBOL
 			if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.JCL); err != nil {
 				return err
+			}
+
+			// --- Resolve and upload COBOL ---
+			log.Info().Msg("Scanning for and uploading required source files...")
+			uploadedSources := make(map[string]bool) // Track unique local paths uploaded: localPath -> true
+
+			for _, job := range graceCfg.Jobs {
+				jobLogCtx := log.With().Str("job", job.Name).Logger()
+
+				targetSrcPDS := config.ResolveSRCDataset(job, graceCfg)
+				if targetSrcPDS == "" {
+					continue
+				}
+
+				// Ensure the target SRC PDS exists (do this once per needed PDS)
+				// TODO: Optimize EnsurePDSExists check - maybe track checked PDSs? For now, check each time.
+				if err := zowe.EnsurePDSExists(ctx, targetSrcPDS); err != nil {
+					jobLogCtx.Error().Err(err).Str("dataset", targetSrcPDS).Msg("Failed ensuring SRC PDS exists")
+					return err // Fail early
+				}
+
+				// Check inputs for src:// paths for this job
+				for _, inputSpec := range job.Inputs {
+					if strings.HasPrefix(inputSpec.Path, "src://") {
+						resource := strings.TrimPrefix(inputSpec.Path, "src://")
+						localPath := filepath.Join("src", resource)
+
+						if _, err := os.Stat(localPath); err != nil {
+							jobLogCtx.Error().Err(err).Str("local_path", localPath).Str("virtual_path", inputSpec.Path).Msg("Source file required by input not found locally")
+							return fmt.Errorf("required source file %q (for %q in job %q) not found at %s", resource, inputSpec.Path, job.Name, localPath)
+						}
+
+						if uploadedSources[localPath] {
+							jobLogCtx.Debug().Str("local_path", localPath).Msg("Source file already uploaded in this deck run.")
+							continue
+						}
+
+						memberName := strings.ToUpper(strings.TrimSuffix(filepath.Base(resource), filepath.Ext(resource)))
+						if err := utils.ValidatePDSMemberName(memberName); err != nil {
+							jobLogCtx.Error().Err(err).Str("virtual_path", inputSpec.Path).Str("derived_member", memberName).Msg("Invalid member name derived from src:// path")
+							return fmt.Errorf("invalid member name %q derived from path %q", memberName, inputSpec.Path)
+						}
+
+						targetMember := fmt.Sprintf("%s(%s)", targetSrcPDS, memberName)
+						jobLogCtx.Info().Str("local_path", localPath).Str("target", targetMember).Msgf("Uploading source file for DD %q...", inputSpec.Name)
+
+						uploadRes, err := zowe.UploadFileToDataset(ctx, localPath, targetMember)
+						if err != nil {
+							jobLogCtx.Error().Err(err).Str("target", targetMember).Msg("Source file upload failed")
+							return fmt.Errorf("failed to upload source %s to %s: %w", localPath, targetMember, err)
+						}
+						jobLogCtx.Info().Str("target", targetMember).Msg("✓ Source file uploaded")
+						if uploadRes != nil && uploadRes.Data.Success && len(uploadRes.Data.APIResponse) > 0 {
+							jobLogCtx.Debug().Str("local_path", localPath).Str("target", targetMember).Msg("Successfully uploaded COBOL source")
+						}
+
+						uploadedSources[localPath] = true
+					}
+				}
 			}
 
 			// --- Upload JCL ---
