@@ -114,19 +114,19 @@ func RunInitTUI(workspaceArg string) (hlq, profile, workspaceName string, cancel
 		return "", "", "", true
 	}
 
-	hlq = final.inputs[0].Value()
+	workspaceName = final.inputs[0].Value()
+	if workspaceName == "" {
+		workspaceName = "."
+	}
+
+	hlq = final.inputs[1].Value()
 	if hlq == "" {
 		hlq = "IBMUSER"
 	}
 
-	profile = final.inputs[1].Value()
+	profile = final.inputs[2].Value()
 	if profile == "" {
-		profile = "zosmf" // fallback default
-	}
-
-	workspaceName = final.inputs[2].Value()
-	if workspaceName == "" {
-		workspaceName = "."
+		profile = "zosmf"
 	}
 
 	return hlq, profile, workspaceName, false

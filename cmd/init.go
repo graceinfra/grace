@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/graceinfra/grace/internal/templates"
 	"github.com/graceinfra/grace/internal/utils"
@@ -48,6 +50,8 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 		targetDir := workflowName
 		jobName := workflowName
 
+		fmt.Println("targetDir: ", targetDir)
+
 		// If current directory (default) selected, set jobName to cwd
 		if jobName == "." {
 			cwd, _ := os.Getwd()
@@ -75,7 +79,7 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 
 		// Copy each template to destination with template data
 		data := map[string]string{
-			"WorkflowName": workflowName,
+			"WorkflowName": sanitizeWorkflowName(workflowName),
 			"HLQ":          hlq,
 			"Profile":      profile,
 			"JobName":      jobName,
@@ -93,4 +97,27 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 
 		fmt.Printf("✓ Workflow %q initialized!\n", jobName)
 	},
+}
+
+func sanitizeWorkflowName(name string) string {
+	upper := strings.ToUpper(name)
+
+	var sanitized []rune
+	for _, r := range upper {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '#' || r == '@' || r == '$' {
+			sanitized = append(sanitized, r)
+		}
+	}
+
+	// Ensure it starts with a letter
+	if len(sanitized) == 0 || !unicode.IsLetter(sanitized[0]) {
+		sanitized = append([]rune{'A'}, sanitized...)
+	}
+
+	// Truncate to 8 characters
+	if len(sanitized) > 8 {
+		sanitized = sanitized[:8]
+	}
+
+	return string(sanitized)
 }
