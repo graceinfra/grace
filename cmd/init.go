@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,24 +87,24 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 
 		if wantTutorial {
 			files := map[string]string{
-				"internal/templates/files/tutorial/graceTutorial.yml": "grace.yml",
-				"internal/templates/files/tutorial/hello.cbl":         "src/hello.cbl",
+				"files/tutorial/graceTutorial.yml": "grace.yml",
+				"files/tutorial/hello.cbl":         "src/hello.cbl",
 			}
 
 			for srcPath, outPath := range files {
-				sourceFile, err := os.Open(srcPath)
+				sourceData, err := templates.TplFS.ReadFile(srcPath)
 				if err != nil {
 					cobra.CheckErr(err)
 				}
-				defer sourceFile.Close()
 
-				destFile, err := os.Create(filepath.Join(targetDir, outPath))
+				destPath := filepath.Join(targetDir, outPath)
+				destFile, err := os.Create(destPath)
 				if err != nil {
 					cobra.CheckErr(err)
 				}
 				defer destFile.Close()
 
-				_, err = io.Copy(destFile, sourceFile)
+				err = os.WriteFile(destPath, sourceData, 0644)
 				cobra.CheckErr(err)
 			}
 

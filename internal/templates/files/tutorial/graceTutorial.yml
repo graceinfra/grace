@@ -32,7 +32,6 @@ jobs:
       - name: SYSLIN
         path: temp://hello.obj
 
-
   - name: RUNHELLO
     step: execute
     program: HELLO
