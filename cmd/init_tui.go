@@ -15,19 +15,20 @@ type initModel struct {
 	done     bool
 }
 
-func initialInitModel(workspaceArg string) initModel {
+func initialInitModel(workflowArg string) initModel {
 	cwd, _ := os.Getwd()
-	defaultWorkspace := filepath.Base(cwd)
+	defaultWorkflow := filepath.Base(cwd)
 
-	workspace := textinput.New()
-	if workspaceArg != "" {
-		workspace.Placeholder = workspaceArg
-	} else {
-		workspace.Placeholder = defaultWorkspace
+	workflow := textinput.New()
+	workflow.Placeholder = defaultWorkflow
+	workflow.CharLimit = 64
+	workflow.Width = 20
+
+	if workflowArg != "" {
+		workflow.SetValue(workflowArg)
+		workflow.CursorEnd()
 	}
-	workspace.CharLimit = 64
-	workspace.Width = 20
-	workspace.Focus()
+	workflow.Focus()
 
 	hlq := textinput.New()
 	hlq.Placeholder = "IBMUSER"
@@ -41,7 +42,7 @@ func initialInitModel(workspaceArg string) initModel {
 	profile.Width = 20
 
 	return initModel{
-		inputs: []textinput.Model{workspace, hlq, profile},
+		inputs: []textinput.Model{workflow, hlq, profile},
 	}
 }
 
@@ -92,7 +93,7 @@ func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m initModel) View() string {
 	s := "\n"
-	labels := []string{"Workspace Name", "HLQ (High-Level Qualifier)", "Profile"}
+	labels := []string{"Workflow Name", "HLQ", "Profile"}
 
 	for i, input := range m.inputs {
 		s += labels[i] + ": " + input.View() + "\n"
@@ -102,7 +103,7 @@ func (m initModel) View() string {
 	return s
 }
 
-func RunInitTUI(workspaceArg string) (hlq, profile, workspaceName string, canceled bool) {
+func RunInitTUI(workspaceArg string) (hlq, profile, workflowName string, canceled bool) {
 	p := tea.NewProgram(initialInitModel(workspaceArg))
 	m, err := p.Run()
 	if err != nil {
@@ -114,9 +115,9 @@ func RunInitTUI(workspaceArg string) (hlq, profile, workspaceName string, cancel
 		return "", "", "", true
 	}
 
-	workspaceName = final.inputs[0].Value()
-	if workspaceName == "" {
-		workspaceName = "."
+	workflowName = final.inputs[0].Value()
+	if workflowName == "" {
+		workflowName = "."
 	}
 
 	hlq = final.inputs[1].Value()
@@ -129,5 +130,5 @@ func RunInitTUI(workspaceArg string) (hlq, profile, workspaceName string, cancel
 		profile = "zosmf"
 	}
 
-	return hlq, profile, workspaceName, false
+	return hlq, profile, workflowName, false
 }

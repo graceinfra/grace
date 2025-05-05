@@ -1,0 +1,39 @@
+config:
+  profile: zosmf
+  defaults:
+    compiler:
+      pgm: IGYCRCTL
+      parms: 'OBJECT,NODECK,LIB'
+      steplib: IGY.V6R4M0.SIGYCOMP
+    linker:
+      pgm: IEWL
+      parms: 'LIST,MAP,XREF'
+
+datasets:
+  jcl: IBMUSER.GRC.HELLO.JCL
+  src: IBMUSER.GRC.HELLO.SRC
+  loadlib: IBMUSER.LOAD
+
+jobs:
+  - name: CMPHELLO
+    step: compile
+    inputs:
+      - name: SYSIN
+        path: src://hello.cbl
+    outputs:
+      - name: SYSLIN
+        path: temp://hello.obj
+
+  - name: LNKHELLO
+    step: linkedit
+    depends_on: [CMPHELLO]
+    program: HELLO
+    inputs:
+      - name: SYSLIN
+        path: temp://hello.obj
+
+
+  - name: RUNHELLO
+    step: execute
+    program: HELLO
+    depends_on: [LNKHELLO]

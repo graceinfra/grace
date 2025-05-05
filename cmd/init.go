@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,13 +13,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var wantTutorial bool = false
+
 func init() {
 	rootCmd.AddCommand(initCmd)
-}
 
-// TODO
-// --no-tui for headless scripting
-// --template support (e.g. initialize a "VSAM ETL" starter)
+	initCmd.Flags().BoolVar(&wantTutorial, "tutorial", false, `Initialize a 'Hello, Grace' tutorial workflow`)
+}
 
 var initCmd = &cobra.Command{
 	Use:   "init [workspace-name]",
@@ -29,7 +30,7 @@ var initCmd = &cobra.Command{
   - A .grace/ directory for logs and deck output
   - A src/ directory for COBOL or GraceLang source files
 
-This command can be used with an optional [workflow-name], or it will launch an interactive prompt to populate your HLQ, Zowe profile, and workflow name in grace.yml.
+This command can be used with an optional [workflow-name] argument, and will launch an interactive prompt to populate your HLQ, Zowe profile, and workflow name in grace.yml.
 
 Use init to start building Grace workflows declaratively, with ready-to-run JCL templates and a clean IaC layout.`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -85,6 +86,33 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 			"JobName":      jobName,
 		}
 
+		if wantTutorial {
+			files := map[string]string{
+				"internal/templates/files/tutorial/graceTutorial.yml": "grace.yml",
+				"internal/templates/files/tutorial/hello.cbl":         "src/hello.cbl",
+			}
+
+			for srcPath, outPath := range files {
+				sourceFile, err := os.Open(srcPath)
+				if err != nil {
+					cobra.CheckErr(err)
+				}
+				defer sourceFile.Close()
+
+				destFile, err := os.Create(filepath.Join(targetDir, outPath))
+				if err != nil {
+					cobra.CheckErr(err)
+				}
+				defer destFile.Close()
+
+				_, err = io.Copy(destFile, sourceFile)
+				cobra.CheckErr(err)
+			}
+
+			fmt.Printf("✓ Workflow %q initialized!\n", workflowName)
+			return
+		}
+
 		files := map[string]string{
 			"files/grace.yml.tmpl": "grace.yml",
 		}
@@ -95,7 +123,7 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 			templates.WriteTpl(tplPath, outPath, data)
 		}
 
-		fmt.Printf("✓ Workflow %q initialized!\n", jobName)
+		fmt.Printf("✓ Workflow %q initialized!\n", workflowName)
 	},
 }
 
