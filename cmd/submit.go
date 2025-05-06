@@ -23,10 +23,10 @@ func init() {
 
 var submitCmd = &cobra.Command{
 	Use:   "submit",
-	Short: "Upload datasets and submit jobs to the mainframe",
+	Short: "Submit a workflow for orchestration",
 	Long: `Submit initiates the asynchronous execution of a workflow defined in grace.yml.
 
-Grace will launch a detached background process to manage the full DAG execution,
+Grace will launch a detached background process to manage the full workflow orchestration,
 including dependencies and concurrency, identical to 'grace run'. This command
 returns immediately after successfully launching the background process.
 
