@@ -2,5 +2,6 @@ grace
 .grace
 zapp.yaml
 coverage.out
+.DS_Store
 
 **/.claude/settings.local.json
