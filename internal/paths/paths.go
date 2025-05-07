@@ -60,7 +60,7 @@ func PreresolveOutputPaths(cfg *types.GraceConfig) (map[string]string, error) {
 // generateTempDSN_Idempotent creates a DSN without runtime IDs.
 // Convention: <HLQ>.GRC.H<PathHash>.<DDNAME>
 func generateTempDSN_Idempotent(hlq string, spec types.FileSpec) (string, error) {
-	// 1. Hash the virtual path
+	// Hash the virtual path
 	hasher := fnv.New32a()
 	_, _ = hasher.Write([]byte(spec.Path))
 	pathHash := strconv.FormatUint(uint64(hasher.Sum32()), 36)
@@ -69,20 +69,20 @@ func generateTempDSN_Idempotent(hlq string, spec types.FileSpec) (string, error)
 	}
 	pathHash = strings.ToUpper(pathHash)
 
-	// 2. Get DDName
+	// Get DDName
 	ddName := strings.ToUpper(spec.Name)
 	if len(ddName) > 8 {
 		ddName = ddName[:8]
 	}
 
-	// 3. Construct DSN parts (No WFID qualifier)
+	// Construct DSN parts (No WFID qualifier)
 	fixedQualifier := "GRC"
 	hashQualifier := "H" + pathHash
 
 	dsnParts := []string{hlq, fixedQualifier, hashQualifier, ddName}
 	dsn := strings.Join(dsnParts, ".")
 
-	// 4. Validate
+	// Validate
 	if err := utils.ValidateDataSetQualifiers(dsn); err != nil {
 		log.Error().Err(err).Str("generated_dsn", dsn).Str("virtual_path", spec.Path).Msg("Generated idempotent DSN failed validation")
 		return "", fmt.Errorf("generated idempotent DSN %q failed validation: %w", dsn, err)

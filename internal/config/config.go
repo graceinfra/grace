@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var allowedSteps = map[string]bool{
+var allowedTypes = map[string]bool{
 	"execute":  true,
 	"compile":  true,
 	"linkedit": true,
@@ -42,6 +42,11 @@ func LoadGraceConfig(filename string) (*types.GraceConfig, error) {
 	// Validate the loaded configuration
 	if err := ValidateGraceConfig(&graceCfg); err != nil {
 		return nil, fmt.Errorf("validation error in %s: %w", filename, err)
+	}
+
+	if graceCfg.Config.Cleanup.OnSuccess == nil {
+		defaultTrue := true
+		graceCfg.Config.Cleanup.OnSuccess = &defaultTrue
 	}
 
 	return &graceCfg, nil
@@ -180,41 +185,41 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			jobNames[upperName] = true
 		}
 
-		// Validate job.Step
-		if job.Step == "" {
+		// Validate job.Type
+		if job.Type == "" {
 			errs = append(errs, fmt.Sprintf("%s: field 'step' is required", jobCtx))
-		} else if !allowedSteps[job.Step] { // Check against allowed steps
-			allowed := getAllowedStepKeys(allowedSteps)
-			errs = append(errs, fmt.Sprintf("%s: invalid step %q; allowed steps are: %v", jobCtx, job.Step, allowed))
+		} else if !allowedTypes[job.Type] { // Check against allowed steps
+			allowed := getAllowedStepKeys(allowedTypes)
+			errs = append(errs, fmt.Sprintf("%s: invalid type %q; allowed steps are: %v", jobCtx, job.Type, allowed))
 		}
 
-		// Validate step specific requirements
-		switch job.Step {
+		// Validate type specific requirements
+		switch job.Type {
 		case "compile":
 			if len(job.Inputs) == 0 {
-				errs = append(errs, fmt.Sprintf("%s: job requires at least one input (e.g. SYSIN) for step 'compile'", jobCtx))
+				errs = append(errs, fmt.Sprintf("%s: job requires at least one input (e.g. SYSIN) for type 'compile'", jobCtx))
 			}
 			if len(job.Outputs) == 0 {
-				errs = append(errs, fmt.Sprintf("%s: job requires at least one output (e.g. SYSLIN) for step 'compile'", jobCtx))
+				errs = append(errs, fmt.Sprintf("%s: job requires at least one output (e.g. SYSLIN) for type 'compile'", jobCtx))
 			}
 		case "linkedit":
 			if len(job.Inputs) == 0 {
-				errs = append(errs, fmt.Sprintf("%s: job requires at least one input (e.g. SYSLIN) for step 'linkedit'", jobCtx))
+				errs = append(errs, fmt.Sprintf("%s: job requires at least one input (e.g. SYSLIN) for type 'linkedit'", jobCtx))
 			}
 
 			// Check if loadlib is defined either globally or locally
 			if cfg.Datasets.LoadLib == "" && (job.Datasets == nil || job.Datasets.LoadLib == "") {
-				errs = append(errs, fmt.Sprintf("%s: step 'linkedit' requires 'datasets.loadlib' to be defined either globally or for the job", jobCtx))
+				errs = append(errs, fmt.Sprintf("%s: type 'linkedit' requires 'datasets.loadlib' to be defined either globally or for the job", jobCtx))
 			}
 
 			if job.Program == nil || *job.Program == "" {
-				errs = append(errs, fmt.Sprintf("%s: step 'execute' requires 'overrides.program.name' to specify the program to execute", jobCtx))
+				errs = append(errs, fmt.Sprintf("%s: type 'execute' requires 'overrides.program.name' to specify the program to execute", jobCtx))
 			} else if err := utils.ValidatePDSMemberName(*job.Program); err != nil {
 				errs = append(errs, fmt.Sprintf("%s: invalid 'overrides.program.name' for use as PGM name: %v", jobCtx, err))
 			}
 
 			if cfg.Datasets.LoadLib == "" && (job.Datasets == nil || job.Datasets.LoadLib == "") {
-				errs = append(errs, fmt.Sprintf("%s: step 'execute' requires 'datasets.loadlib' to be defined for STEPLIB", jobCtx))
+				errs = append(errs, fmt.Sprintf("%s: type 'execute' requires 'datasets.loadlib' to be defined for STEPLIB", jobCtx))
 			}
 		}
 

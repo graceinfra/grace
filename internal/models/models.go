@@ -25,7 +25,7 @@ type ExecutionSummary struct {
 type JobSummary struct {
 	JobName    string  `json:"job_name"`
 	JobID      string  `json:"job_id"`
-	Step       string  `json:"step"`
+	Type       string  `json:"type"`
 	Source     string  `json:"source"`
 	Status     string  `json:"status"`      // Final status (e.g., "OUTPUT", "ABEND", "INPUT", "SUBMIT_FAILED")
 	ReturnCode *string `json:"return_code"` // Final return code
@@ -40,7 +40,7 @@ type JobSummary struct {
 type JobExecutionRecord struct {
 	JobName     string          `json:"job_name"`
 	JobID       string          `json:"job_id"`
-	Step        string          `json:"step"`
+	Type        string          `json:"type"`
 	Source      string          `json:"source"`
 	RetryIndex  int             `json:"retry_index"`
 	GraceCmd    string          `json:"grace_cmd"`

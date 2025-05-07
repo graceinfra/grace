@@ -2,8 +2,10 @@ package types
 
 type Job struct {
 	Name     string `yaml:"name"`
-	Step     string `yaml:"step"`
+	Type     string `yaml:"type"`
 	Template string `yaml:"template,omitempty"`
+
+	With string `yaml:"with,omitempty"`
 
 	Program *string `yaml:"program"`
 

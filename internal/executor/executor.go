@@ -332,7 +332,7 @@ func (e *Executor) executeJob(jobName string) {
 	}
 
 	primarySourcePath := ""
-	if job.Step == "compile" {
+	if job.Type == "compile" {
 		for _, input := range job.Inputs {
 			// Conventionally, SYSIN is the primary source for compile
 			if strings.ToUpper(input.Name) == "SYSIN" {
@@ -346,7 +346,7 @@ func (e *Executor) executeJob(jobName string) {
 	record := &models.JobExecutionRecord{
 		JobName:     job.Name,
 		JobID:       "PENDING_SUBMIT",
-		Step:        job.Step,
+		Type:        job.Type,
 		Source:      primarySourcePath,
 		GraceCmd:    e.ctx.GraceCmd,
 		ZoweProfile: e.ctx.Config.Config.Profile,
@@ -369,7 +369,7 @@ func (e *Executor) executeJob(jobName string) {
 				jobLogger.Error().Err(err).Str("path", outputSpec.Path).Msg("Error resolving path to temp:// dataset")
 			}
 			_ = zowe.DeleteDatasetIfExists(e.ctx, dsn)
-			jobLogger.Debug().Str("path", outputSpec.Path).Str("dsn", dsn).Msg("Delete data set operation")
+			jobLogger.Debug().Str("path", outputSpec.Path).Str("dsn", dsn).Msg("Delete data set operation success")
 		}
 	}
 
@@ -541,7 +541,7 @@ func (e *Executor) collectFinalResults() []models.JobExecutionRecord {
 				skippedRecord := models.JobExecutionRecord{
 					JobName:     jobName,
 					JobID:       "SKIPPED",
-					Step:        node.Job.Step,
+					Type:        node.Job.Type,
 					GraceCmd:    e.ctx.GraceCmd,
 					ZoweProfile: e.ctx.Config.Config.Profile,
 					HLQ:         hlq,

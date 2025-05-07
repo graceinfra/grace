@@ -75,7 +75,7 @@ func generateExecutionSummary(
 		summary := models.JobSummary{
 			JobName:    record.JobName,
 			JobID:      record.JobID,
-			Step:       record.Step,
+			Type:       record.Type,
 			Source:     record.Source,
 			Status:     finalStatus,
 			ReturnCode: finalRetCode,

@@ -45,13 +45,13 @@ func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
 
 	err := cmd.Run()
 
-	// Get stdout and stderr content regardless of error
+	// Get stdout content regardless of error
 	stdoutBytes := outBuf.Bytes()
-	stderrString := errBuf.String()
+	stdoutString := outBuf.String()
 
-	// Log stderr content if verbose logging is enabled and stderr is not empty
-	if stderrString != "" {
-		zoweLogger.Debug().Strs("args", args).Str("stderr", stderrString).Msg("Zowe command stderr output")
+	// Log stdout content if verbose logging is enabled and stderr is not empty
+	if stdoutString != "" {
+		zoweLogger.Debug().Strs("args", args).Msg("Zowe command stderr output")
 	}
 
 	// Handle process execution errors (e.g., command not found, non-zero exit code)
@@ -59,7 +59,6 @@ func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
 		zoweLogger.Error().
 			Err(err).
 			Strs("args", args).
-			Str("stderr", stderrString).
 			Msg("Zowe process execution failed")
 
 		// Process execution failed. Return stdout (it might still contain partial JSON/info)
@@ -67,7 +66,7 @@ func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
 		return stdoutBytes, fmt.Errorf("zowe process execution failed for 'zowe %s': %w\nstderr:\n%s",
 			strings.Join(args, " "),
 			err,
-			stderrString) // Include stderr in the error message only on process failure
+			stdoutString) // Include stderr in the error message only on process failure
 	}
 
 	// Process execution succeeded (exit code 0).
@@ -111,19 +110,13 @@ type uploadRes struct {
 }
 
 func UploadFileToDataset(ctx *context.ExecutionContext, path, member string) (*uploadRes, error) {
-	// Delete old member
-	// We manually call os/exec here instead of using the runZowe helper
-	// so that we can ignore dataset deletion error if the member doesn't exist.
-	//
-	// We do this because there is no easy way to simply overwrite a data set if it exists,
-	// so we delete and reupload to maintain idempotency.
-
-	quotedMember := `"` + member + `"`
-	var silencedBuf bytes.Buffer
-	cmd := exec.Command("zowe", "zos-files", "delete", "data-set", quotedMember, "-f", "--rfj")
-	cmd.Stdout = &silencedBuf
-	cmd.Stderr = &silencedBuf
-	_ = cmd.Run()
+	// Delete old member to ensure idempotency
+	// 'member' here is the full DSN string, potentially DSN(MEMBER)
+	err := DeleteDatasetIfExists(ctx, member)
+	if err != nil {
+		log.Error().Err(err).Str("target_dataset", member).Msg("Pre-upload deletion of existing target failed.")
+		return nil, fmt.Errorf("failed to delete existing target %s before upload: %w", member, err)
+	}
 
 	// Regular runZowe call for uploading file
 	out, err := runZowe(ctx, "zos-files", "upload", "file-to-data-set", path, member, "--rfj")
@@ -161,9 +154,7 @@ func CheckPDSExists(ctx *context.ExecutionContext, name string) (bool, error) {
 		Str("workflow_id", ctx.WorkflowId.String()).
 		Logger()
 
-	quotedName := `"` + name + `"`
-
-	out, err := runZowe(ctx, "zos-files", "list", "data-set", quotedName, "--rfj")
+	out, err := runZowe(ctx, "zos-files", "list", "data-set", name, "--rfj")
 	if err != nil {
 		return false, err
 	}
@@ -188,9 +179,7 @@ func EnsurePDSExists(ctx *context.ExecutionContext, name string) error {
 		Str("workflow_id", ctx.WorkflowId.String()).
 		Logger()
 
-	quotedName := `"` + name + `"`
-
-	out, err := runZowe(ctx, "zos-files", "list", "data-set", quotedName, "--rfj")
+	out, err := runZowe(ctx, "zos-files", "list", "data-set", name, "--rfj")
 	if err != nil {
 		return err
 	}
@@ -232,9 +221,7 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 		Str("workflow_id", ctx.WorkflowId.String()).
 		Logger()
 
-	quotedName := `"` + name + `"`
-
-	out, err := runZowe(ctx, "zos-files", "list", "data-set", quotedName, "--rfj")
+	out, err := runZowe(ctx, "zos-files", "list", "data-set", name, "--rfj")
 	if err != nil {
 		return err
 	}
@@ -271,14 +258,21 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 	return nil
 }
 
-func DeleteDatasetIfExists(ctx *context.ExecutionContext, dsn string) string {
-	quotedDsn := `"` + dsn + `"`
+func DeleteDatasetIfExists(ctx *context.ExecutionContext, dsn string) error {
+	zoweLogger := log.With().Str("component", "zowe_cli").Str("workflow_id", ctx.WorkflowId.String()).Logger()
 
-	var outBuf bytes.Buffer
-	cmd := exec.Command("zowe", "files", "delete", "ds", quotedDsn, "-f", "--rfj")
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &outBuf
-	_ = cmd.Run()
+	out, err := runZowe(ctx, "zos-files", "delete", "data-set", dsn, "-fi", "--rfj")
+	if err != nil {
+		zoweLogger.Error().Err(err).Str("dsn", dsn).Msg("Zowe CLI process failed during delete attempt.")
+		return fmt.Errorf("Zowe CLI process execution failed while trying to delete '%s': %w", dsn, err)
+	}
 
-	return outBuf.String()
+	var deleteRes types.ZoweRfj
+	if unmarshalErr := json.Unmarshal(out, &deleteRes); unmarshalErr != nil {
+		zoweLogger.Error().Err(unmarshalErr).Str("dsn", dsn).Str("raw_output", string(out)).Msg("Failed to unmarshal Zowe delete response.")
+		return fmt.Errorf("failed to parse Zowe delete response for '%s': %w", dsn, err)
+	}
+
+	zoweLogger.Debug().Str("dsn", dsn).Msg("Dataset/member deleted successfully or did not exist.")
+	return nil
 }

@@ -16,6 +16,7 @@ type GraceConfig struct {
 			Compiler Compiler `yaml:"compiler,omitempty"`
 			Linker   Linker   `yaml:"linker,omitempty"`
 		} `yaml:"defaults,omitempty"`
+		Cleanup CleanupSettings `yaml:"cleanup,omitempty"`
 	} `yaml:"config"`
 
 	Datasets Datasets `yaml:"datasets"`
@@ -32,6 +33,11 @@ type Linker struct {
 	Pgm     string `yaml:"pgm,omitempty"`
 	Parms   string `yaml:"parms,omitempty"`
 	StepLib string `yaml:"steplib,omitempty"`
+}
+
+type CleanupSettings struct {
+	OnSuccess *bool `yaml:"on_success,omitempty"`
+	OnFailure *bool `yaml:"on_failure,omitempty"`
 }
 
 type Datasets struct {

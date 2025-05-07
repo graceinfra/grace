@@ -10,6 +10,7 @@ import (
 	"text/template"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/graceinfra/grace/internal/config"
@@ -91,12 +92,12 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			// --- Determine template ---
 
 			var templatePath string
-			step := job.Step
+			jobType := job.Type
 
 			if job.Template != "" {
 				templatePath = job.Template
-			} else if step != "" {
-				switch step {
+			} else if jobType != "" {
+				switch jobType {
 				case "compile":
 					templatePath = "files/compile.jcl.tmpl"
 				case "linkedit":
@@ -104,12 +105,12 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 				case "execute":
 					templatePath = "files/execute.jcl.tmpl"
 				default:
-					logCtx.Error().Str("step", step).Msg("Unsupported step type")
-					return fmt.Errorf("unsupported step type %q for job %q", step, job.Name)
+					logCtx.Error().Str("type", jobType).Msg("Unsupported job type")
+					return fmt.Errorf("unsupported job type %q for job %q", jobType, job.Name)
 				}
 			} else {
-				logCtx.Error().Str("step", step).Msg("No step or template defined")
-				return fmt.Errorf("job %q has no step or template defined", job.Name)
+				logCtx.Error().Str("type", jobType).Msg("No job type or template defined")
+				return fmt.Errorf("job %q has no type or template defined", job.Name)
 			}
 
 			// --- Generate DD statements ---
@@ -213,7 +214,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 						if err != nil {
 							jobLogCtx.Error().Err(err).Str("target", targetMember).Msg("Source file upload failed")
 							return fmt.Errorf("failed to upload source %s to %s: %w", localPath, targetMember, err)
-						}
+						} // error from UploadFileToDataset
 						jobLogCtx.Info().Str("target", targetMember).Msg("✓ Source file uploaded")
 						if uploadRes != nil && uploadRes.Data.Success && len(uploadRes.Data.APIResponse) > 0 {
 							jobLogCtx.Debug().Str("local_path", localPath).Str("target", targetMember).Msg("Successfully uploaded COBOL source")
@@ -246,39 +247,6 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
 				logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("JCL upload details")
 			}
-
-			// --- Upload COBOL source ---
-
-			// execute should always get source via //SYSIN DD from 'inputs' field. can revisit
-			// assumed to be referenced via input (src://) for compile steps, or pre-exist for execute steps.
-			// grace deck primarily handles JCL now
-			// TODO
-
-			// if job.Step == "execute" {
-			//
-			// 	// Construct path to COBOL file
-			// 	srcMember := fmt.Sprintf("%s(%s)", graceCfg.Datasets.SRC, jobNameUpper)
-			//
-			// 	srcPath := filepath.Join("src", job.Source)
-			// 	_, err = os.Stat(srcPath)
-			// 	if err != nil {
-			// 		logCtx.Error().Err(err).Str("path", srcPath).Msg("COBOL source upload failed")
-			// 		return fmt.Errorf("unable to resolve COBOL source file %s for job %s", srcPath, job.Name)
-			// 	}
-			//
-			// 	cobolUploadRes, err := zowe.UploadFileToDataset(ctx, srcPath, srcMember)
-			// 	if err != nil {
-			// 		logCtx.Error().Err(err).Str("target", srcMember).Msg("COBOL source upload failed")
-			// 		return fmt.Errorf("COBOL source upload to %s failed for job %s: %w\n", srcMember, job.Name, err)
-			// 	}
-			//
-			// 	log.Info().Str("source_file", job.Source).Str("target", srcMember).Msg("✓ COBOL data set uploaded")
-			// 	if cobolUploadRes != nil && cobolUploadRes.Data.Success && len(cobolUploadRes.Data.APIResponse) > 0 {
-			// 		logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("COBOL upload details")
-			// 	}
-			// } else {
-			// 	logCtx.Debug().Msg("Skipping COBOL source upload (no source defined).")
-			// }
 		} else {
 			logCtx.Info().Msg("Skipping uploads (--no-upload).")
 		}
@@ -362,5 +330,110 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 	}
 
 	runLogger.Info().Msg("✓ Executor finished successfully.")
+
+	// --- Perform cleanup ---
+	runCleanup := false
+	workflowActuallyFailed := execErr != nil // Executor-level failure
+
+	if !workflowActuallyFailed { // No executor error, check job records for any actual failures
+		for _, record := range jobExecutionRecords {
+			jobFailed := false
+			if record.JobID == "SUBMIT_FAILED" {
+				jobFailed = true
+			} else if record.JobID != "SKIPPED" {
+				if record.FinalResponse != nil && record.FinalResponse.Data != nil {
+					status := record.FinalResponse.Data.Status
+					rc := record.FinalResponse.Data.RetCode
+
+					isJobStatusFailure := status == "ABEND" ||
+						status == "JCL ERROR" ||
+						status == "SEC ERROR" ||
+						status == "SYSTEM FAILURE" ||
+						status == "CANCELED" ||
+						(status == "OUTPUT" && rc != nil && *rc != "CC 0000" && *rc != "CC 0004")
+
+					if isJobStatusFailure {
+						jobFailed = true
+					}
+				} else if record.FinalResponse == nil {
+					// Job attempted to run (not SKIPPED) but has no final response
+					jobFailed = true
+					runLogger.Warn().Str("job_name", record.JobName).Msg("Job ran but has no final response, considering workflow as failed for cleanup decision.")
+				}
+			}
+
+			if jobFailed {
+				workflowActuallyFailed = true
+				break
+			}
+		}
+	}
+
+	cfgCleanup := ctx.Config.Config.Cleanup
+
+	effectiveCleanupOnSuccess := true
+	if cfgCleanup.OnSuccess != nil {
+		effectiveCleanupOnSuccess = *cfgCleanup.OnSuccess
+	}
+
+	effectiveCleanupOnFailure := false
+	if cfgCleanup.OnFailure != nil {
+		effectiveCleanupOnFailure = *cfgCleanup.OnFailure
+	}
+
+	if !workflowActuallyFailed && effectiveCleanupOnSuccess {
+		runCleanup = true
+		runLogger.Info().Msg("Workflow successful, proceeding with cleanup of temporary datasets.")
+	} else if workflowActuallyFailed && effectiveCleanupOnFailure {
+		runCleanup = true
+		runLogger.Info().Msg("Workflow failed, proceeding with cleanup of temporary datasets as configured.")
+	} else {
+		if workflowActuallyFailed {
+			runLogger.Info().Msgf("Workflow failed and cleanup.on_failure is not enabled. Skipping cleanup of temporary datasets.")
+		} else {
+			// Workflow succeeded but cleanup.on_success is not enabled
+			runLogger.Info().Msgf("Workflow successful but cleanup.on_success is not enabled. Skipping cleanup of temporary datasets.")
+		}
+	}
+
+	if runCleanup {
+		o.cleanupTemporaryDatasets(ctx, runLogger)
+	}
+
 	return jobExecutionRecords, nil
+}
+
+func (o *zoweOrchestrator) cleanupTemporaryDatasets(ctx *context.ExecutionContext, logger zerolog.Logger) {
+	logger.Info().Msg("Cleaning intermediate datasets...")
+	cleanedCount := 0
+	failedCleanupCount := 0
+
+	for _, job := range ctx.Config.Jobs {
+		for _, outputSpec := range job.Outputs {
+			if strings.HasPrefix(outputSpec.Path, "temp://") && !outputSpec.Keep {
+				dsnToDelete, exists := ctx.ResolvedPaths[outputSpec.Path]
+				if !exists {
+					logger.Warn().Str("job", job.Name).Str("virtual_path", outputSpec.Path).Msg("Temporary output path not found in resolved paths, cannot clean up.")
+					continue
+				}
+
+				logger.Info().Str("dsn", dsnToDelete).Msgf("Attempting to clean temporary dataset for output '%s' ('%s') of job '%s'", outputSpec.Name, outputSpec.Path, job.Name)
+
+				if err := zowe.DeleteDatasetIfExists(ctx, dsnToDelete); err != nil {
+					logger.Error().Err(err).Str("dsn", dsnToDelete).Msg("Failed to delete temporary dataset.")
+					failedCleanupCount++
+				} else {
+					logger.Info().Str("dsn", dsnToDelete).Msg("Successfully cleaned temporary dataset.")
+					cleanedCount++
+				}
+			} else if outputSpec.Keep {
+				dsnToNotDelete, exists := ctx.ResolvedPaths[outputSpec.Path]
+				if exists {
+					logger.Info().Str("dsn", dsnToNotDelete).Msg("Skipping cleanup of temporary dataset due to 'keep: true' flag.")
+				}
+			}
+		}
+	}
+
+	logger.Info().Msgf("Temporary dataset cleanup summary: %d datasets processed for deletion, %d failures", cleanedCount+failedCleanupCount, failedCleanupCount)
 }

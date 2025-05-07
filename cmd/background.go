@@ -60,7 +60,7 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 
 	orch := orchestrator.NewZoweOrchestrator()
 	bgWorkflowLogger.Debug().Msg("Invoking DAG executor...")
-	startTimeForSummary := time.Now()
+	workflowStartTimeForSummary := time.Now()
 	jobExecutionRecords, execErr := orch.Run(ctx)
 
 	// --- Process results & write summary
@@ -72,7 +72,7 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 	}
 
 	// Generate summary regardless of execErr, using potentially partial records
-	summary := generateExecutionSummary(jobExecutionRecords, workflowId, startTimeForSummary, graceCfg, "submit-bg", onlyFilter)
+	summary := generateExecutionSummary(jobExecutionRecords, workflowId, workflowStartTimeForSummary, graceCfg, "submit-bg", onlyFilter)
 
 	// Attempt to write summary
 	err = writeSummary(summary, logDir)
