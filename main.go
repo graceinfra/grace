@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/graceinfra/grace/cmd"
+	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/logging"
 	"github.com/rs/zerolog/log"
 )
@@ -58,6 +59,21 @@ func main() {
 		fmt.Fprintf(os.Stderr, "FATAL: Failed to initialize logging: %v\n", err)
 		os.Exit(1)
 	}
+
+	// --- Initialize handlers registry ---
+
+	registry := jobhandler.NewRegistry()
+	registry.Register(&jobhandler.ZosCompileHandler{})
+	registry.Register(&jobhandler.ZosLinkeditHandler{})
+	registry.Register(&jobhandler.ZosExecuteHandler{})
+	registry.Register(&jobhandler.ShellHandler{})
+
+	// --- Register handlers in global app dependencies ---
+
+	appDeps := &cmd.AppDependencies{
+		HandlerRegistry: registry,
+	}
+	cmd.SetDependencies(appDeps)
 
 	// --- Execute command ---
 

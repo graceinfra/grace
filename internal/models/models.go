@@ -26,7 +26,6 @@ type JobSummary struct {
 	JobName    string  `json:"job_name"`
 	JobID      string  `json:"job_id"`
 	Type       string  `json:"type"`
-	Source     string  `json:"source"`
 	Status     string  `json:"status"`      // Final status (e.g., "OUTPUT", "ABEND", "INPUT", "SUBMIT_FAILED")
 	ReturnCode *string `json:"return_code"` // Final return code
 	SubmitTime string  `json:"submit_time"` // RFC3339
@@ -41,7 +40,6 @@ type JobExecutionRecord struct {
 	JobName     string          `json:"job_name"`
 	JobID       string          `json:"job_id"`
 	Type        string          `json:"type"`
-	Source      string          `json:"source"`
 	RetryIndex  int             `json:"retry_index"`
 	GraceCmd    string          `json:"grace_cmd"`
 	ZoweProfile string          `json:"zowe_profile"`

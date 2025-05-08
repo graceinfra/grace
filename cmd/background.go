@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
+	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/orchestrator"
 	"github.com/rs/zerolog/log"
 )
@@ -17,7 +18,6 @@ import (
 // It runs the full orchestration logic and logs to files.
 func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter []string) {
 	bgWorkflowLogger := log.With().Str("workflow_id", workflowIdStr).Logger()
-
 	workflowId, err := uuid.Parse(workflowIdStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Background Error: Invalid workflow ID %q: %v\n", workflowIdStr, err)
@@ -39,21 +39,37 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 	bgWorkflowLogger.Info().Msgf("Using config: %s", configPath)
 	bgWorkflowLogger.Info().Msgf("Using log directory: %s", logDir)
 
+	// --- Initialize registry ---
+
+	registry := jobhandler.NewRegistry()
+	registry.Register(&jobhandler.ZosCompileHandler{})
+	registry.Register(&jobhandler.ZosLinkeditHandler{})
+	registry.Register(&jobhandler.ZosExecuteHandler{})
+	registry.Register(&jobhandler.ShellHandler{})
+
 	// --- Load grace.yml ---
 
-	graceCfg, err := config.LoadGraceConfig(configPath)
+	graceCfg, configDir, err := config.LoadGraceConfig(configPath)
 	if err != nil {
 		log.Error().Str("workflow", workflowIdStr).Msgf("Failed to load configuration: %v", err)
 		os.Exit(1)
 	}
 
+	if err := config.ValidateGraceConfig(graceCfg, registry); err != nil {
+		log.Error().Err(err).Str("workflow_id", workflowIdStr).Msg("Configuration validation failed")
+		os.Exit(1)
+	}
+
 	// --- Create context ---
+	localStageDir := filepath.Join(logDir, ".local-staging")
 	ctx := &context.ExecutionContext{
-		WorkflowId: workflowId,
-		Config:     graceCfg,
-		LogDir:     logDir,
-		SubmitOnly: onlyFilter,
-		GraceCmd:   "submit-bg",
+		WorkflowId:    workflowId,
+		Config:        graceCfg,
+		ConfigDir:     configDir,
+		LogDir:        logDir,
+		LocalStageDir: localStageDir,
+		SubmitOnly:    onlyFilter,
+		GraceCmd:      "submit-bg",
 	}
 
 	// --- Instantiate and run orchestrator ---
@@ -61,7 +77,7 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 	orch := orchestrator.NewZoweOrchestrator()
 	bgWorkflowLogger.Debug().Msg("Invoking DAG executor...")
 	workflowStartTimeForSummary := time.Now()
-	jobExecutionRecords, execErr := orch.Run(ctx)
+	jobExecutionRecords, execErr := orch.Run(ctx, registry)
 
 	// --- Process results & write summary
 

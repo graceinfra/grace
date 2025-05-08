@@ -9,9 +9,9 @@ import (
 
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
+	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/logging"
 	"github.com/graceinfra/grace/internal/models"
-	"github.com/graceinfra/grace/internal/paths"
 	"github.com/graceinfra/grace/internal/zowe"
 	"github.com/graceinfra/grace/types"
 	"github.com/rs/zerolog"
@@ -55,12 +55,13 @@ type Executor struct {
 	concurrencyChan   chan struct{} // Semaphore to limit concurrency
 	jobCompletionChan chan struct{} // Channel to signal job completion
 	errChan           chan error    // For fatal errors (not currently used) TODO (?)
+	registry          *jobhandler.HandlerRegistry
 	logger            zerolog.Logger
 }
 
 const DefaultConcurrency = 5
 
-func NewExecutor(ctx *context.ExecutionContext, graph map[string]*config.JobNode, concurrency int) *Executor {
+func NewExecutor(ctx *context.ExecutionContext, graph map[string]*config.JobNode, concurrency int, registry *jobhandler.HandlerRegistry) *Executor {
 	instanceLogger := log.With().
 		Str("component", "executor").
 		Str("workflow_id", ctx.WorkflowId.String()).
@@ -80,6 +81,7 @@ func NewExecutor(ctx *context.ExecutionContext, graph map[string]*config.JobNode
 		concurrencyChan:   make(chan struct{}, concurrency), // Buffered channel acts as a semaphore
 		jobCompletionChan: make(chan struct{}, len(graph)),
 		errChan:           make(chan error, 1),
+		registry:          registry,
 		logger:            instanceLogger,
 	}
 }
@@ -318,10 +320,6 @@ func (e *Executor) executeJob(jobName string) {
 		jobLogger.Debug().Msg("Job signaled completion.")
 	}()
 
-	node := e.jobGraph[jobName]
-	job := node.Job
-	startTime := time.Now()
-
 	host, _ := os.Hostname()
 	hlq := ""
 	if e.ctx.Config.Datasets.JCL != "" {
@@ -331,23 +329,43 @@ func (e *Executor) executeJob(jobName string) {
 		}
 	}
 
-	primarySourcePath := ""
-	if job.Type == "compile" {
-		for _, input := range job.Inputs {
-			// Conventionally, SYSIN is the primary source for compile
-			if strings.ToUpper(input.Name) == "SYSIN" {
-				primarySourcePath = input.Path // Use virtual path (e.g. "src://hello.cbl")
-				break
-			}
+	startTime := time.Now()
+
+	// --- Get the appropriate handler for the job type ---
+	node := e.jobGraph[jobName]
+	job := node.Job
+	handler, exists := e.registry.Get(job.Type)
+	if !exists {
+		jobLogger.Error().Str("job_type", job.Type).Msg("Critical: No handler found for job type during execution")
+		e.setJobState(jobName, StateFailed)
+
+		errorRecord := &models.JobExecutionRecord{
+			JobName:     job.Name,
+			JobID:       "NO_HANDLER_FOUND",
+			Type:        job.Type,
+			RetryIndex:  0,
+			GraceCmd:    e.ctx.GraceCmd,
+			ZoweProfile: e.ctx.Config.Config.Profile,
+			HLQ:         hlq,
+			Initiator: types.Initiator{
+				Type:   "user",
+				Id:     os.Getenv("USER"),
+				Tenant: host,
+			},
+			WorkflowId: e.ctx.WorkflowId,
+			SubmitTime: startTime.Format(time.RFC3339),
 		}
+
+		e.addResult(jobName, errorRecord)
+		return
 	}
-	// TODO: add logic for other step types if they have a clear primary source
+
+	jobLogger = jobLogger.With().Str("handler", handler.Type()).Logger()
 
 	record := &models.JobExecutionRecord{
 		JobName:     job.Name,
 		JobID:       "PENDING_SUBMIT",
 		Type:        job.Type,
-		Source:      primarySourcePath,
 		GraceCmd:    e.ctx.GraceCmd,
 		ZoweProfile: e.ctx.Config.Config.Profile,
 		HLQ:         hlq,
@@ -360,18 +378,9 @@ func (e *Executor) executeJob(jobName string) {
 		SubmitTime: startTime.Format(time.RFC3339),
 	}
 
-	jobLogger.Info().Msg("Cleaning datasets ...")
+	jobLogger.Info().Msg("Cleaning datasets...")
 
-	for _, outputSpec := range job.Outputs {
-		if strings.Contains(outputSpec.Path, "temp://") {
-			dsn, err := paths.ResolvePath(e.ctx, job, outputSpec.Path)
-			if err != nil {
-				jobLogger.Error().Err(err).Str("path", outputSpec.Path).Msg("Error resolving path to temp:// dataset")
-			}
-			_ = zowe.DeleteDatasetIfExists(e.ctx, dsn)
-			jobLogger.Debug().Str("path", outputSpec.Path).Str("dsn", dsn).Msg("Delete data set operation success")
-		}
-	}
+	handler.Prepare(e.ctx, job, jobLogger)
 
 	// --- Submit job ---
 

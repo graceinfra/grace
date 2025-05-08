@@ -5,7 +5,7 @@ type Job struct {
 	Type     string `yaml:"type"`
 	Template string `yaml:"template,omitempty"`
 
-	With string `yaml:"with,omitempty"`
+	ShellWith *ShellWith `yaml:"with"`
 
 	Program *string `yaml:"program"`
 
@@ -25,6 +25,12 @@ type Job struct {
 	Wait    bool   `yaml:"wait,omitempty"`
 	View    string `yaml:"view"`
 	Retries int    `yaml:"retries"`
+}
+
+type ShellWith struct {
+	Script       string `yaml:"script,omitempty"` // path to script
+	InlineScript string `yaml:"inline,omitempty"` // inline script
+	Shell        string `yaml:"shell,omitempty"`  // sh, bash, zsh, etc
 }
 
 type CompilerOverride struct {

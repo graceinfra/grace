@@ -17,6 +17,7 @@ import (
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/executor"
 	"github.com/graceinfra/grace/internal/jcl"
+	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/paths"
 	grctemplate "github.com/graceinfra/grace/internal/templates"
@@ -258,7 +259,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 }
 
 // Run implements the DAG job execution and monitoring logic using the executor.
-func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecutionRecord, error) {
+func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext, registry *jobhandler.HandlerRegistry) ([]models.JobExecutionRecord, error) {
 	// Configure contextual logger
 	runLogger := log.With().Str("workflow_id", ctx.WorkflowId.String()).Logger()
 
@@ -313,7 +314,7 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext) ([]models.JobExecu
 	// --- Create and run executor ---
 
 	// We pass the max concurrency setting from grace.yml here
-	exec := executor.NewExecutor(ctx, jobGraph, ctx.Config.Config.Concurrency)
+	exec := executor.NewExecutor(ctx, jobGraph, ctx.Config.Config.Concurrency, registry)
 
 	runLogger.Debug().Msg("Invoking executor...")
 
