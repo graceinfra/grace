@@ -20,6 +20,7 @@ import (
 	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/paths"
+	"github.com/graceinfra/grace/internal/resolver"
 	grctemplate "github.com/graceinfra/grace/internal/templates"
 	"github.com/graceinfra/grace/internal/utils"
 	"github.com/graceinfra/grace/internal/zowe"
@@ -33,7 +34,7 @@ func NewZoweOrchestrator() Orchestrator {
 }
 
 // DeckAndUpload implements the JCL generation and upload logic
-func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompile, noUpload bool) error {
+func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry *jobhandler.HandlerRegistry, noCompile, noUpload bool) error {
 	graceCfg := ctx.Config
 
 	// Ensure .grace/deck exists
@@ -123,14 +124,14 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			}
 
 			// --- Prepare template data ---
-			programName := config.ResolveProgramName(job, graceCfg) // Used for PGM= or member name
-			compilerPgm := config.ResolveCompilerPgm(job, graceCfg)
-			compilerParms := config.ResolveCompilerParms(job, graceCfg)
-			compilerSteplib := config.ResolveCompilerSteplib(job, graceCfg)
-			linkerPgm := config.ResolveLinkerPgm(job, graceCfg)
-			linkerParms := config.ResolveLinkerParms(job, graceCfg)
-			linkerSteplib := config.ResolveLinkerSteplib(job, graceCfg)
-			loadLib := config.ResolveLoadLib(job, graceCfg) // Get potentially overridden loadlib
+			programName := resolver.ResolveProgramName(job, graceCfg) // Used for PGM= or member name
+			compilerPgm := resolver.ResolveCompilerPgm(job, graceCfg)
+			compilerParms := resolver.ResolveCompilerParms(job, graceCfg)
+			compilerSteplib := resolver.ResolveCompilerSteplib(job, graceCfg)
+			linkerPgm := resolver.ResolveLinkerPgm(job, graceCfg)
+			linkerParms := resolver.ResolveLinkerParms(job, graceCfg)
+			linkerSteplib := resolver.ResolveLinkerSteplib(job, graceCfg)
+			loadLib := resolver.ResolveLoadLib(job, graceCfg) // Get potentially overridden loadlib
 
 			data := map[string]string{
 				"JobName":         job.Name,
@@ -174,7 +175,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, noCompil
 			for _, job := range graceCfg.Jobs {
 				jobLogCtx := log.With().Str("job", job.Name).Logger()
 
-				targetSrcPDS := config.ResolveSRCDataset(job, graceCfg)
+				targetSrcPDS := resolver.ResolveSRCDataset(job, graceCfg)
 				if targetSrcPDS == "" {
 					continue
 				}

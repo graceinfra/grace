@@ -38,11 +38,20 @@ Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// --- Load and validate grace.yml ---
 
+		registry := GetDependencies().HandlerRegistry
+
+		// TOOD: could implement this as a flag
 		configPath := "grace.yml"
-		_, err := config.LoadGraceConfig(configPath)
+		graceCfg, _, err := config.LoadGraceConfig(configPath)
+		if err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to load %q: %w", configPath, err))
+		}
+
+		err = config.ValidateGraceConfig(graceCfg, registry)
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to load/validate %q: %w", configPath, err))
 		}
+
 		log.Info().Msgf("✓ Configuration %q loaded and validated.", configPath)
 
 		// --- Prepare for background execution ---

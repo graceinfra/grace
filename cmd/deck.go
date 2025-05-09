@@ -35,14 +35,27 @@ Deck supports templated compilation, custom templates, and selective job targeti
 
 Use deck to prepare and stage mainframe batch jobs before invoking [grace run] or [grace submit].`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Load and validate grace.yml
-		graceCfg, err := config.LoadGraceConfig("grace.yml")
+		// --- Get HandlerRegistry from dependencies ---
+
+		registry := GetDependencies().HandlerRegistry
+
+		// --- Load and validate grace.yml ---
+
+		// LoadGraceConfig performs initial validation
+		graceCfg, configDir, err := config.LoadGraceConfig("grace.yml")
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to load grace configuration: %w", err))
 		}
 
+		// Perform full validation using the registry. This
+		// this validates job types at the handler level
+		if err := config.ValidateGraceConfig(graceCfg, registry); err != nil {
+			cobra.CheckErr(fmt.Errorf("grace configuration validation failed: %w", err))
+		}
+
 		ctx := &context.ExecutionContext{
 			Config:     graceCfg,
+			ConfigDir:  configDir,
 			SubmitOnly: deckJobs,
 			GraceCmd:   "deck",
 		}
@@ -52,7 +65,7 @@ Use deck to prepare and stage mainframe batch jobs before invoking [grace run] o
 
 		log.Info().Msg("Starting deck and upload process...")
 
-		err = orch.DeckAndUpload(ctx, noCompile, noUpload)
+		err = orch.DeckAndUpload(ctx, registry, noCompile, noUpload)
 		cobra.CheckErr(err)
 	},
 }

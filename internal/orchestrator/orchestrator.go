@@ -7,6 +7,6 @@ import (
 )
 
 type Orchestrator interface {
+	DeckAndUpload(ctx *context.ExecutionContext, registry *jobhandler.HandlerRegistry, noCompile, noUpload bool) error
 	Run(ctx *context.ExecutionContext, registry *jobhandler.HandlerRegistry) ([]models.JobExecutionRecord, error)
-	DeckAndUpload(ctx *context.ExecutionContext, noCompile, noUpload bool) error
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
-	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/orchestrator"
 	"github.com/rs/zerolog/log"
 )
@@ -39,22 +38,19 @@ func RunBackgroundWorkflow(workflowIdStr, configPath, logDir string, onlyFilter 
 	bgWorkflowLogger.Info().Msgf("Using config: %s", configPath)
 	bgWorkflowLogger.Info().Msgf("Using log directory: %s", logDir)
 
-	// --- Initialize registry ---
-
-	registry := jobhandler.NewRegistry()
-	registry.Register(&jobhandler.ZosCompileHandler{})
-	registry.Register(&jobhandler.ZosLinkeditHandler{})
-	registry.Register(&jobhandler.ZosExecuteHandler{})
-	registry.Register(&jobhandler.ShellHandler{})
+	// --- Get HandlerRegistry from dependencies
+	registry := GetDependencies().HandlerRegistry
 
 	// --- Load grace.yml ---
 
+	// LoadGraceConfig performs initial schema validation and returns config and its directory
 	graceCfg, configDir, err := config.LoadGraceConfig(configPath)
 	if err != nil {
 		log.Error().Str("workflow", workflowIdStr).Msgf("Failed to load configuration: %v", err)
 		os.Exit(1)
 	}
 
+	// --- Perform full validation using the registry ---
 	if err := config.ValidateGraceConfig(graceCfg, registry); err != nil {
 		log.Error().Err(err).Str("workflow_id", workflowIdStr).Msg("Configuration validation failed")
 		os.Exit(1)

@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/utils"
 	"github.com/graceinfra/grace/types"
 	"gopkg.in/yaml.v3"
@@ -24,24 +26,32 @@ var allowedTypes = map[string]bool{
 // Basic DDName validation (1-8 chars, starts non-numeric, common chars)
 var ddNameRegex = regexp.MustCompile(`^[A-Z#$@][A-Z0-9#$@]{0,7}$`)
 
-// Basic virtual path check (e.g., scheme://path)
+// Basic virtual path check (e.g., scheme://resource)
 var virtualPathRegex = regexp.MustCompile(`^[a-zA-Z]+://.+`)
 
-func LoadGraceConfig(filename string) (*types.GraceConfig, error) {
-	data, err := os.ReadFile(filename)
+func LoadGraceConfig(configPath string) (*types.GraceConfig, string, error) {
+	absPath, err := filepath.Abs(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file %s: %w", filename, err)
+		return nil, "", fmt.Errorf("failed to get absolute path for config %s: %w", configPath, err)
+	}
+
+	configDir := filepath.Dir(absPath)
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read config file %s: %w", absPath, err)
 	}
 
 	var graceCfg types.GraceConfig
 	err = yaml.Unmarshal(data, &graceCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse YAML in %s: %w", filename, err)
+		return nil, "", fmt.Errorf("failed to parse YAML in %s: %w", absPath, err)
 	}
 
-	// Validate the loaded configuration
-	if err := ValidateGraceConfig(&graceCfg); err != nil {
-		return nil, fmt.Errorf("validation error in %s: %w", filename, err)
+	// Perform initial validation (syntax, structure), passing nil for registry.
+	// Full handler-based validation will occur later when the handler registry is available
+	if err := ValidateGraceConfig(&graceCfg, nil); err != nil {
+		return nil, "", fmt.Errorf("validation error in %s: %w", absPath, err)
 	}
 
 	if graceCfg.Config.Cleanup.OnSuccess == nil {
@@ -49,7 +59,7 @@ func LoadGraceConfig(filename string) (*types.GraceConfig, error) {
 		graceCfg.Config.Cleanup.OnSuccess = &defaultTrue
 	}
 
-	return &graceCfg, nil
+	return &graceCfg, configDir, nil
 }
 
 // Helper to get sorted keys from the allowedSteps map for error messages
@@ -62,9 +72,9 @@ func getAllowedStepKeys(m map[string]bool) []string {
 	return keys
 }
 
-func ValidateGraceConfig(cfg *types.GraceConfig) error {
+func ValidateGraceConfig(cfg *types.GraceConfig, registry *jobhandler.HandlerRegistry) error {
 	// Basic syntax and field validation
-	syntaxErrs := validateSyntax(cfg)
+	syntaxErrs := validateSyntax(cfg, registry)
 
 	// --- Build job map & prepare graph ---
 
@@ -117,7 +127,7 @@ func ValidateGraceConfig(cfg *types.GraceConfig) error {
 	return nil
 }
 
-func validateSyntax(cfg *types.GraceConfig) []string {
+func validateSyntax(cfg *types.GraceConfig, registry *jobhandler.HandlerRegistry) []string {
 	var errs []string
 
 	// --- Validate top-level 'config' section ---
@@ -188,42 +198,27 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 		// Validate job.Type
 		if job.Type == "" {
 			errs = append(errs, fmt.Sprintf("%s: field 'step' is required", jobCtx))
-		} else if !allowedTypes[job.Type] { // Check against allowed steps
+		} else if registry != nil { // Check against job handler registry
+			handler, exists := registry.Get(job.Type)
+			if !exists {
+				allowed := registry.GetRegisteredTypes()
+				errs = append(errs, fmt.Sprintf("%s: invalid type %q; known types are: %v", jobCtx, job.Type, allowed))
+			} else {
+				handlerErrs := handler.Validate(job, cfg)
+				if len(handlerErrs) > 0 {
+					for _, handlerErr := range handlerErrs {
+						errs = append(errs, fmt.Sprintf("%s: %s", jobCtx, handlerErr))
+					}
+				}
+			}
+		} else if !allowedTypes[job.Type] {
 			allowed := getAllowedStepKeys(allowedTypes)
-			errs = append(errs, fmt.Sprintf("%s: invalid type %q; allowed steps are: %v", jobCtx, job.Type, allowed))
+			errs = append(errs, fmt.Sprintf("%s: invalid type %q (handler validation skipped); allowed built-in types are: %v", jobCtx, job.Type, allowed))
 		}
 
-		// Validate type specific requirements
-		switch job.Type {
-		case "compile":
-			if len(job.Inputs) == 0 {
-				errs = append(errs, fmt.Sprintf("%s: job requires at least one input (e.g. SYSIN) for type 'compile'", jobCtx))
-			}
-			if len(job.Outputs) == 0 {
-				errs = append(errs, fmt.Sprintf("%s: job requires at least one output (e.g. SYSLIN) for type 'compile'", jobCtx))
-			}
-		case "linkedit":
-			if len(job.Inputs) == 0 {
-				errs = append(errs, fmt.Sprintf("%s: job requires at least one input (e.g. SYSLIN) for type 'linkedit'", jobCtx))
-			}
-
-			// Check if loadlib is defined either globally or locally
-			if cfg.Datasets.LoadLib == "" && (job.Datasets == nil || job.Datasets.LoadLib == "") {
-				errs = append(errs, fmt.Sprintf("%s: type 'linkedit' requires 'datasets.loadlib' to be defined either globally or for the job", jobCtx))
-			}
-
-			if job.Program == nil || *job.Program == "" {
-				errs = append(errs, fmt.Sprintf("%s: type 'execute' requires 'overrides.program.name' to specify the program to execute", jobCtx))
-			} else if err := utils.ValidatePDSMemberName(*job.Program); err != nil {
-				errs = append(errs, fmt.Sprintf("%s: invalid 'overrides.program.name' for use as PGM name: %v", jobCtx, err))
-			}
-
-			if cfg.Datasets.LoadLib == "" && (job.Datasets == nil || job.Datasets.LoadLib == "") {
-				errs = append(errs, fmt.Sprintf("%s: type 'execute' requires 'datasets.loadlib' to be defined for STEPLIB", jobCtx))
-			}
-		}
-
-		// Validate job.Datasets
+		// Validate job.Datasets if they exist. This applies if
+		// the job block in grace.yml contains job-specific dataset overrides
+		// for the global workspace level config.datasets block
 		if job.Datasets != nil {
 			dsCtx := fmt.Sprintf("%s datasets override:", jobCtx)
 			if job.Datasets.JCL != "" {
@@ -311,11 +306,12 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			} else if !virtualPathRegex.MatchString(inputSpec.Path) {
 				errs = append(errs, fmt.Sprintf("%s: invalid 'path' format %q (must be scheme://resource)", inputCtx, inputSpec.Path))
 			} else {
-				isTemp := strings.HasPrefix(inputSpec.Path, "temp://")
+				isZosTemp := strings.HasPrefix(inputSpec.Path, "zos-temp://")
+				isLocalTemp := strings.HasPrefix(inputSpec.Path, "local-temp://")
 				isSrc := strings.HasPrefix(inputSpec.Path, "src://")
 				isZos := strings.HasPrefix(inputSpec.Path, "zos://")
 
-				if !isTemp && !isSrc && !isZos {
+				if !isZosTemp && !isLocalTemp && !isSrc && !isZos {
 					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q", inputCtx, inputSpec.Path))
 				}
 			}
@@ -346,11 +342,12 @@ func validateSyntax(cfg *types.GraceConfig) []string {
 			} else if !virtualPathRegex.MatchString(outputSpec.Path) {
 				errs = append(errs, fmt.Sprintf("%s: invalid 'path' format %q (must be scheme://resource)", outputCtx, outputSpec.Path))
 			} else {
-				isTemp := strings.HasPrefix(outputSpec.Path, "temp://")
+				isZosTemp := strings.HasPrefix(outputSpec.Path, "zos-temp://")
+				isLocalTemp := strings.HasPrefix(outputSpec.Path, "local-temp://")
 				isSrc := strings.HasPrefix(outputSpec.Path, "src://")
 				isZos := strings.HasPrefix(outputSpec.Path, "zos://")
 
-				if !isTemp && !isSrc && !isZos {
+				if !isZosTemp && !isLocalTemp && !isSrc && !isZos {
 					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q", outputCtx, outputSpec.Path))
 				}
 			}
@@ -398,7 +395,7 @@ func validateDependenciesAndBuildGraph(cfg *types.GraceConfig, jobMap map[string
 			inputCtx := fmt.Sprintf("%s input[%d]", jobCtx, j)
 			producerJobName, produced := producedPaths[inputSpec.Path]
 
-			if !produced && strings.HasPrefix(inputSpec.Path, "temp://") {
+			if !produced && (strings.HasPrefix(inputSpec.Path, "zos-temp://") || strings.HasPrefix(inputSpec.Path, "local-temp://")) {
 				errs = append(errs, fmt.Sprintf("%s: input path %q is not produced by any job", inputCtx, inputSpec.Path))
 				continue
 			} else if produced {

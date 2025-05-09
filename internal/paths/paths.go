@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
+	"github.com/graceinfra/grace/internal/resolver"
 	"github.com/graceinfra/grace/internal/utils"
 	"github.com/graceinfra/grace/types"
 	"github.com/rs/zerolog/log"
@@ -34,32 +34,42 @@ func PreresolveOutputPaths(cfg *types.GraceConfig) (map[string]string, error) {
 
 	for _, job := range cfg.Jobs {
 		for _, outputSpec := range job.Outputs {
-			if !strings.HasPrefix(outputSpec.Path, "temp://") {
+			if !(strings.HasPrefix(outputSpec.Path, "zos-temp://") || strings.HasPrefix(outputSpec.Path, "local-temp://")) {
 				continue
 			}
 			if _, exists := resolvedPaths[outputSpec.Path]; exists {
 				continue
 			}
 
-			dsn, err := generateTempDSN_Idempotent(hlq, outputSpec)
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate DSN for job %q output %q (%s): %w", job.Name, outputSpec.Name, outputSpec.Path, err)
+			if strings.HasPrefix(outputSpec.Path, "zos-temp://") {
+				dsn, err := generateTempDSN_Idempotent(hlq, outputSpec)
+				if err != nil {
+					return nil, fmt.Errorf("failed to generate DSN for job %q output %q (%s): %w", job.Name, outputSpec.Name, outputSpec.Path, err)
+				}
+				if existingVP, collision := generatedDSNs[dsn]; collision {
+					// Still check for hash collisions, though less likely
+					return nil, fmt.Errorf("DSN hash collision detected: %q generated for both %q and %q", dsn, existingVP, outputSpec.Path)
+				}
+				resolvedPaths[outputSpec.Path] = dsn
+				generatedDSNs[dsn] = outputSpec.Path
+				log.Debug().Str("virtual_path", outputSpec.Path).Str("resolved_dsn", dsn).Msg("Preresolved output path (idempotent)")
+			} else if strings.HasPrefix(outputSpec.Path, "local-temp://") {
+				resource := strings.TrimPrefix(outputSpec.Path, "local-temp://")
+				if resource == "" {
+					return nil, fmt.Errorf("local-temp:// path for job %q output %q (%s) cannot be empty", job.Name, outputSpec.Name, outputSpec.Path)
+				}
+
+				resolvedPaths[outputSpec.Path] = resource
+				log.Debug().Str("virtual_path", outputSpec.Path).Str("local_indentifier", resource).Msg("Preresolved local-temp:// output path (identifier)")
 			}
-			if existingVP, collision := generatedDSNs[dsn]; collision {
-				// Still check for hash collisions, though less likely
-				return nil, fmt.Errorf("DSN hash collision detected: %q generated for both %q and %q", dsn, existingVP, outputSpec.Path)
-			}
-			resolvedPaths[outputSpec.Path] = dsn
-			generatedDSNs[dsn] = outputSpec.Path
-			log.Debug().Str("virtual_path", outputSpec.Path).Str("resolved_dsn", dsn).Msg("Preresolved output path (idempotent)")
 		}
 	}
 	return resolvedPaths, nil
 }
 
-// generateTempDSN_Idempotent creates a DSN without runtime IDs.
+// generateZosTempDSN_Idempotent creates a DSN without runtime IDs.
 // Convention: <HLQ>.GRC.H<PathHash>.<DDNAME>
-func generateTempDSN_Idempotent(hlq string, spec types.FileSpec) (string, error) {
+func generateZosTempDSN_Idempotent(hlq string, spec types.FileSpec) (string, error) {
 	// Hash the virtual path
 	hasher := fnv.New32a()
 	_, _ = hasher.Write([]byte(spec.Path))
@@ -104,23 +114,34 @@ func ResolvePath(ctx *context.ExecutionContext, job *types.Job, virtualPath stri
 	log.Debug().Str("virtual_path", virtualPath).Str("scheme", scheme).Str("resource", resource).Msg("Resolving path")
 
 	switch scheme {
-	case "temp":
+	case "zos-temp":
 		// Retrieve pre-resolved DSN from the context's map
 		ctx.PathMutex.RLock()
 		dsn, exists := ctx.ResolvedPaths[virtualPath]
 		ctx.PathMutex.RUnlock()
 
 		if !exists {
-			log.Error().Str("virtual_path", virtualPath).Msg("Attempted to resolve an unknown/unresolved temp:// path")
+			log.Error().Str("virtual_path", virtualPath).Msg("Attempted to resolve an unknown/unresolved zos-temp:// path")
 			return "", fmt.Errorf("temporary path %q not found in resolved paths map (was it produced by an earlier job?)", virtualPath)
 		}
 
 		log.Debug().Str("virtual_path", virtualPath).Str("scheme", scheme).Str("resolved_dsn", dsn).Msg("Resolved temp:// path")
 		return dsn, nil
 
+	case "local-temp":
+		localIdentifier, exists := ctx.ResolvedPaths[virtualPath]
+		if !exists || ctx.LocalStageDir == "" {
+			return "", fmt.Errorf("local-temp path %q not resolved or LocalStageDir not set", virtualPath)
+		}
+
+		resolvedLocalPath := filepath.Join(ctx.LocalStageDir, localIdentifier)
+
+		log.Debug().Str("virtual_path", virtualPath).Str("scheme", scheme).Str("resolved_local_path", resolvedLocalPath).Msg("Resolved local-temp:// path")
+		return resolvedLocalPath, nil
+
 	case "src":
 		// Resolve relative to the configured 'datasets.src' PDS
-		srcPDS := config.ResolveSRCDataset(job, ctx.Config)
+		srcPDS := resolver.ResolveSRCDataset(job, ctx.Config)
 		if srcPDS == "" {
 			return "", fmt.Errorf("cannot resolve src:// path %q: datasets.src is not defined in grace.yml", virtualPath)
 		}

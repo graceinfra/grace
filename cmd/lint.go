@@ -30,8 +30,13 @@ Use this command to check your configuration file before running 'deck', 'run', 
 
 		fmt.Printf("Linting file: %s\n", lintFile)
 
-		_, err := config.LoadGraceConfig(lintFile)
+		graceCfg, _, err := config.LoadGraceConfig(lintFile)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "✖ Validation failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := config.ValidateGraceConfig(graceCfg, GetDependencies().HandlerRegistry); err != nil {
 			fmt.Fprintf(os.Stderr, "✖ Validation failed: %v\n", err)
 			os.Exit(1)
 		} else {

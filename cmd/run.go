@@ -35,9 +35,17 @@ Use '--only' to selectively run specific jobs.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// --- Load and validate grace.yml ---
 
-		graceCfg, err := config.LoadGraceConfig("grace.yml")
+		registry := GetDependencies().HandlerRegistry
+
+		graceCfg, configDir, err := config.LoadGraceConfig("grace.yml")
 		if err != nil {
 			cobra.CheckErr(fmt.Errorf("failed to load grace configuration: %w", err))
+		}
+
+		// --- Perform full validation using the registry ---
+
+		if err := config.ValidateGraceConfig(graceCfg, registry); err != nil {
+			cobra.CheckErr(fmt.Errorf("grace configuration validation failed: %w", err))
 		}
 
 		// --- Create log directory ---
@@ -53,6 +61,7 @@ Use '--only' to selectively run specific jobs.`,
 		ctx := &context.ExecutionContext{
 			WorkflowId: workflowId,
 			Config:     graceCfg,
+			ConfigDir:  configDir,
 			LogDir:     logDir,
 			SubmitOnly: submitOnly,
 			GraceCmd:   "run",
@@ -63,7 +72,7 @@ Use '--only' to selectively run specific jobs.`,
 		orch := orchestrator.NewZoweOrchestrator()
 		log.Info().Str("workflow_id", workflowId.String()).Msg("Starting workflow run...")
 
-		jobExecutionRecords, err := orch.Run(ctx)
+		jobExecutionRecords, err := orch.Run(ctx, registry)
 		cobra.CheckErr(err)
 
 		// --- Construct workflow summary ---

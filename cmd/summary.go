@@ -76,7 +76,6 @@ func generateExecutionSummary(
 			JobName:    record.JobName,
 			JobID:      record.JobID,
 			Type:       record.Type,
-			Source:     record.Source,
 			Status:     finalStatus,
 			ReturnCode: finalRetCode,
 			SubmitTime: record.SubmitTime,
