@@ -31,7 +31,7 @@ func (h *ZosLinkeditHandler) Validate(job *types.Job, cfg *types.GraceConfig) []
 		errs = append(errs, fmt.Sprintf("%s: requires at least one input (e.g. SYSIN)", jobCtx))
 	}
 
-	if job.Program != nil && *job.Program != "" {
+	if job.Program == nil && *job.Program == "" {
 		errs = append(errs, fmt.Sprintf("%s: 'program' field (output member name) is required and cannot be empty", jobCtx))
 	} else {
 		if err := utils.ValidatePDSMemberName(*job.Program); err != nil {
