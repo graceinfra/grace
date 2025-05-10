@@ -157,7 +157,7 @@ func (h *ZosLinkEditHandler) Execute(ctx *context.ExecutionContext, job *types.J
 	return record
 }
 
-func (h *ZosLinkEditHandler) Cleaup(ctx *context.ExecutionContext, job *types.Job, execRecord *models.JobExecutionRecord, logger zerolog.Logger) error {
+func (h *ZosLinkEditHandler) Cleanup(ctx *context.ExecutionContext, job *types.Job, execRecord *models.JobExecutionRecord, logger zerolog.Logger) error {
 	logger.Debug().Msg("Cleanup step for ZosLinkeditHandler (no-op)")
 	return nil
 }
