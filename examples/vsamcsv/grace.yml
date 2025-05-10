@@ -31,7 +31,6 @@ jobs:
       - name: SYSLIN
         path: zos-temp://vsamcsv.obj
 
-
   - name: RUN
     type: execute
     depends_on: [LINK]
@@ -47,17 +46,7 @@ jobs:
     type: shell
     depends_on: [RUN]
     with:
-      inline: |
-        echo "CSV data from mainframe has been downloaded by Grace to: $GRACE_INPUT_CSVDL"
-        echo "Content of the CSV file (first 5 lines):"
-        head -n 5 "$GRACE_INPUT_CSVDL"
-        
-        # Example: copy it to a persistent location in the current directory (where grace is run)
-        cp "$GRACE_INPUT_CSVDL" ./final_vsam_extract.csv
-        echo "Copied to ./final_vsam_extract.csv"
-
-        echo "Line count:"
-        wc -l "$GRACE_INPUT_CSVDL"
+      inline: cp "$GRACE_INPUT_CSVDL" ./final_vsam_extract.csv
     inputs:
       - name: CSVDL
         path: zos-temp://vsam_extract.csv
