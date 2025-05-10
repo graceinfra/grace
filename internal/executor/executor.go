@@ -12,7 +12,6 @@ import (
 	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/logging"
 	"github.com/graceinfra/grace/internal/models"
-	"github.com/graceinfra/grace/internal/zowe"
 	"github.com/graceinfra/grace/types"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -26,12 +25,6 @@ const (
 
 	// Dependencies checked and met, ready for submission queue.
 	StateReady JobState = "READY"
-
-	// Picked up by the scheduler, attempting to submit via Zowe.
-	StateSubmitting JobState = "SUBMITTING"
-
-	// Submitted successfully via Zowe, polling for completion.
-	StateRunning JobState = "RUNNING"
 
 	// Terminal state: Job completed successfully (e.g., RC 0).
 	StateSucceeded JobState = "SUCCEEDED"
@@ -166,14 +159,13 @@ func (e *Executor) ExecuteAndWait() ([]models.JobExecutionRecord, error) {
 	e.wg.Wait()
 	e.logger.Debug().Msg("All job goroutines completed.")
 
-	// --- Handle skipped jobs and finalize results
+	// --- Handle skipped jobs and finalize results ---
 
 	e.markSkippedJobs()
 	finalResults := e.collectFinalResults()
 
 	e.logger.Debug().Msgf("Collected %d final job execution records.", len(finalResults))
 
-	// TODO: Error reporting - did the executor itself fail?
 	return finalResults, nil
 }
 
@@ -246,12 +238,9 @@ func (e *Executor) checkAndReadyJobs() {
 				}
 			}
 
-			if depsMet && e.jobStates[jobName] == StatePending {
+			if depsMet && e.jobStates[jobName] == StatePending { // Re-check state in case it became SKIPPED
 				e.jobStates[jobName] = StateReady
 				e.logger.Debug().Str("job_name", jobName).Msg("Job is now READY (dependencies met).")
-			} else if !depsMet && e.jobStates[jobName] == StatePending {
-				// If deps are not met and state didn't change to SKIPPED, ensure it's WAITING_DEPS or keep PENDING
-				// e.jobStates[jobName] = StateWaitingDeps // Optional explicit state but we can leave it as PENDING for now
 			}
 		}
 	}
@@ -293,7 +282,6 @@ func (e *Executor) launchReadyJobs(activeGoroutines *int) int {
 			continue
 		}
 
-		e.jobStates[jobName] = StateSubmitting
 		e.stateMutex.Unlock()
 
 		jobLogger.Info().Msg("🚀 Launching job")
@@ -307,6 +295,49 @@ func (e *Executor) launchReadyJobs(activeGoroutines *int) int {
 	}
 
 	return launchedCount
+}
+
+// determineJobSuccess inspects the JobExecutionRecord to determine if the job succeeded.
+// This encapsulates the logic for checking Zowe return codes or Shell exit statuses.
+func determineJobSuccess(record *models.JobExecutionRecord, jobType string) bool {
+	if record == nil {
+		return false // Should not happen if handler.Execute always returns a record
+	}
+
+	// For Zowe-based jobs (compile, linkedit, execute)
+	if jobType == "compile" || jobType == "linkedit" || jobType == "execute" {
+		if record.SubmitResponse != nil && !record.SubmitResponse.Success {
+			return false // Submission itself failed
+		}
+		if record.FinalResponse == nil || record.FinalResponse.Data == nil {
+			return false // No final response or data means we can't determine success
+		}
+		if !record.FinalResponse.Success { // Zowe reported logical failure in final response
+			return false
+		}
+
+		status := record.FinalResponse.Data.Status
+		retCode := record.FinalResponse.Data.RetCode
+
+		if status == "OUTPUT" {
+			if retCode == nil { // Consider OUTPUT with null retcode as success (e.g. some utilities)
+				return true
+			}
+			// Common success codes
+			return *retCode == "CC 0000" || *retCode == "CC 0004"
+		}
+		return false // Not in OUTPUT status
+	}
+
+	if jobType == "shell" {
+		// ShellHandler's Execute method populates SubmitResponse/FinalResponse to indicate script outcome
+		if record.FinalResponse != nil { // FinalResponse holds shell stdout/stderr/exit
+			return record.FinalResponse.Success // ShellHandler sets this based on script exit code
+		}
+		return false // No final response from shell handler implies an issue
+	}
+
+	return false
 }
 
 // executeJob is the goroutine function that handles the lifecycle of a single job
@@ -329,11 +360,12 @@ func (e *Executor) executeJob(jobName string) {
 		}
 	}
 
+	node := e.jobGraph[jobName]
+	job := node.Job
 	startTime := time.Now()
 
 	// --- Get the appropriate handler for the job type ---
-	node := e.jobGraph[jobName]
-	job := node.Job
+
 	handler, exists := e.registry.Get(job.Type)
 	if !exists {
 		jobLogger.Error().Str("job_type", job.Type).Msg("Critical: No handler found for job type during execution")
@@ -348,148 +380,132 @@ func (e *Executor) executeJob(jobName string) {
 			ZoweProfile: e.ctx.Config.Config.Profile,
 			HLQ:         hlq,
 			Initiator: types.Initiator{
-				Type:   "user",
-				Id:     os.Getenv("USER"),
+				Type:   "system",
+				Id:     "grace-executor",
 				Tenant: host,
 			},
 			WorkflowId: e.ctx.WorkflowId,
 			SubmitTime: startTime.Format(time.RFC3339),
+			FinishTime: time.Now().Format(time.RFC3339),
+			DurationMs: time.Since(startTime).Milliseconds(),
+			SubmitResponse: &types.ZoweRfj{
+				Success: false,
+				Error: &types.ZoweRfjError{
+					Msg: "No handler found for job type",
+				},
+			},
 		}
-
-		e.addResult(jobName, errorRecord)
-		return
-	}
-
-	jobLogger = jobLogger.With().Str("handler", handler.Type()).Logger()
-
-	record := &models.JobExecutionRecord{
-		JobName:     job.Name,
-		JobID:       "PENDING_SUBMIT",
-		Type:        job.Type,
-		GraceCmd:    e.ctx.GraceCmd,
-		ZoweProfile: e.ctx.Config.Config.Profile,
-		HLQ:         hlq,
-		Initiator: types.Initiator{
-			Type:   "user",
-			Id:     os.Getenv("USER"),
-			Tenant: host,
-		},
-		WorkflowId: e.ctx.WorkflowId,
-		SubmitTime: startTime.Format(time.RFC3339),
-	}
-
-	jobLogger.Info().Msg("Cleaning datasets...")
-
-	handler.Prepare(e.ctx, job, jobLogger)
-
-	// --- Submit job ---
-
-	jobLogger.Info().Msg("Submitting job ...")
-
-	submitResult, submitErr := zowe.SubmitJob(e.ctx, job)
-	record.SubmitResponse = submitResult
-
-	if submitErr != nil {
-		jobLogger.Error().Err(submitErr).Msgf("Job submission failed")
 
 		e.setJobState(jobName, StateFailed)
+		e.addResult(jobName, errorRecord)
 
-		record.JobID = "SUBMIT_FAILED"
-		record.FinishTime = time.Now().Format(time.RFC3339)
-		record.DurationMs = time.Since(startTime).Milliseconds()
-
-		e.addResult(jobName, record)
-
-		err := logging.SaveJobExecutionRecord(e.ctx.LogDir, *record)
-		if err != nil {
-			jobLogger.Error().
-				Err(err).
-				Str("log_dir", e.ctx.LogDir).
-				Msg("Failed to save job execution record")
+		if err := logging.SaveJobExecutionRecord(e.ctx.LogDir, *errorRecord); err != nil {
+			jobLogger.Error().Err(err).Msg("Failed to save error job execution record for NO_HANDLER")
 		}
-
 		return
 	}
 
-	// --- Submission succeeded ---
+	jobLogger = jobLogger.With().Str("handler_type", handler.Type()).Logger()
 
-	record.JobID = submitResult.Data.JobID
+	// --- Call handler Prepare ---
 
-	// Initialize a new logger with job_id
-	jobIdLogger := jobLogger.With().Str("job_id", record.JobID).Logger()
+	jobLogger.Info().Msg("Preparing job...")
 
-	jobIdLogger.Info().Msgf("✓ Job submitted (ID: %s). Waiting for completion...", record.JobID)
-	e.setJobState(jobName, StateRunning)
+	if err := handler.Prepare(e.ctx, job, jobLogger); err != nil {
+		jobLogger.Error().Err(err).Msg("Job preparation failed.")
 
-	// --- Wait for completion ---
-
-	finalResult, waitErr := zowe.WaitForJobCompletion(e.ctx, record.JobID, jobName)
-	record.FinalResponse = finalResult
-
-	finishTime := time.Now()
-	record.FinishTime = finishTime.Format(time.RFC3339)
-	record.DurationMs = int64(finishTime.Sub(startTime).Milliseconds())
-
-	// --- Determine final state AND success ---
-
-	finalState := StateFailed
-	isSuccess := false
-
-	if waitErr != nil {
-		jobIdLogger.Error().Err(waitErr).Msg("Failed to get final status after waiting")
-	} else if finalResult == nil || finalResult.Data == nil {
-		jobIdLogger.Error().Msg("Polling for job finished, but final status data is incomplete.")
-	} else {
-		status := finalResult.Data.Status
-		retCodeStr := "null"
-		isRcFailure := false
-
-		if finalResult.Data.RetCode != nil {
-			retCodeStr = *finalResult.Data.RetCode
-
-			// Check if the RC string itself indicates a failure type
-			if retCodeStr == "JCL ERROR" || // Explicitly check for JCL ERROR RC string
-				retCodeStr == "ABEND" || // Check for ABEND RC string (might include Sxxx/Uxxx)
-				retCodeStr == "FLUSHED" || // Jobs can be flushed
-
-				// Add other RC strings that always mean failure?
-				(retCodeStr != "CC 0000" && retCodeStr != "CC 0004") { // Check for non-success CCs
-				// Note: This condition might double-count "JCL ERROR", which is fine.
-				isRcFailure = true
-			}
+		prepFailRecord := models.JobExecutionRecord{
+			JobName:     jobName,
+			JobID:       "PREPARE_FAILED",
+			Type:        job.Type,
+			GraceCmd:    e.ctx.GraceCmd,
+			ZoweProfile: e.ctx.Config.Config.Profile,
+			HLQ:         strings.Split(e.ctx.Config.Datasets.JCL, ".")[0],
+			Initiator: types.Initiator{
+				Type: "system",
+				Id:   "grace-executor",
+			},
+			WorkflowId: e.ctx.WorkflowId,
+			SubmitTime: startTime.Format(time.RFC3339),
+			FinishTime: time.Now().Format(time.RFC3339),
+			DurationMs: time.Since(startTime).Milliseconds(),
+			SubmitResponse: &types.ZoweRfj{
+				Success: false,
+				Error: &types.ZoweRfjError{
+					Msg: fmt.Sprintf("Preparation failed: %s", err.Error()),
+				},
+			},
 		}
-
-		// Determine success: Status must be OUTPUT and RC must NOT indicate failure
-		if status == "OUTPUT" && !isRcFailure {
-			finalState = StateSucceeded
-			isSuccess = true
-			jobIdLogger.Info().Msgf("✓ Job completed: Status %s, RC %s", status, retCodeStr)
-		} else {
-			// Any other status OR OUTPUT with a failure RC is treated as failure for state machine
-			finalState = StateFailed
-			isSuccess = false
-			if status != "OUTPUT" {
-				jobIdLogger.Warn().Msgf("Job finished with non-OUTPUT status: %s", status)
-			} else { // Status was OUTPUT, so RC must have been bad
-				jobIdLogger.Warn().Msgf("Job finished with OUTPUT status but failure RC: %s", retCodeStr)
-			}
+		e.setJobState(jobName, StateFailed)
+		e.addResult(jobName, &prepFailRecord)
+		if logErr := logging.SaveJobExecutionRecord(e.ctx.LogDir, prepFailRecord); logErr != nil {
+			jobLogger.Error().Err(logErr).Msg("Failed to save job execution record for PREPARE_FAILED")
 		}
+		return // Do not proceed to Execute or Cleanup if Prepare fails
 	}
 
-	// --- Final update ---
+	jobLogger.Info().Msg("✓ Job preparation complete.")
 
-	e.setJobState(jobName, finalState)
-	e.addResult(jobName, record)
-	err := logging.SaveJobExecutionRecord(e.ctx.LogDir, *record)
-	if err != nil {
-		jobIdLogger.Error().Err(err).Str("log_dir", e.ctx.LogDir).Msg("Failed to save job execution record")
+	// --- Call handler Execute ---
+
+	jobLogger.Info().Msg("Executing job...")
+	execRecord := handler.Execute(e.ctx, job, jobLogger)
+
+	if execRecord.FinishTime == "" {
+		execRecord.FinishTime = time.Now().Format(time.RFC3339)
 	}
+	if execRecord.DurationMs == 0 {
+		parsedSubmitTime, pErr := time.Parse(time.RFC3339, execRecord.SubmitTime)
+		if pErr != nil { // Fallback if SubmitTime in record is bad
+			parsedSubmitTime = startTime
+		}
+		parsedFinishTime, _ := time.Parse(time.RFC3339, execRecord.FinishTime)
+		execRecord.DurationMs = parsedFinishTime.Sub(parsedSubmitTime).Milliseconds()
+	}
+
+	// --- Determine overall job success from the record ---
+
+	isSuccess := determineJobSuccess(execRecord, job.Type)
 
 	if isSuccess {
-		jobIdLogger.Info().Msgf("✅ Finished job execution. Final state: %s", finalState)
+		jobLogger.Info().Str("job_id", execRecord.JobID).Msgf("✅ Job execution SUCCEEDED. Final Status: %s, RC: %s", execRecord.FinalResponse.GetStatus(), derefString(execRecord.FinalResponse.Data.RetCode))
+		e.setJobState(jobName, StateSucceeded)
 	} else {
-		jobIdLogger.Error().Msgf("❌ Finished job execution. Final state: %s", finalState)
+		errMsg := "Job execution FAILED."
+		if execRecord.FinalResponse != nil && execRecord.FinalResponse.Error != nil {
+			errMsg = fmt.Sprintf("❌ Job execution FAILED: %s. Final Status: %s, RC: %s", execRecord.FinalResponse.Error.Msg, execRecord.FinalResponse.GetStatus(), derefString(execRecord.FinalResponse.Data.RetCode))
+		} else if execRecord.SubmitResponse != nil && execRecord.SubmitResponse.Error != nil {
+			errMsg = fmt.Sprintf("❌ Job submission FAILED: %s", execRecord.SubmitResponse.Error.Msg)
+		}
+		jobLogger.Error().Str("job_id", execRecord.JobID).Msg(errMsg)
+		e.setJobState(jobName, StateFailed)
 	}
+
+	// --- Add result and save log ---
+
+	e.addResult(jobName, execRecord)
+	if err := logging.SaveJobExecutionRecord(e.ctx.LogDir, *execRecord); err != nil {
+		jobLogger.Error().Err(err).Str("log_dir", e.ctx.LogDir).Msg("Failed to save job execution record")
+	}
+
+	// --- Call handler Cleanup ----
+
+	jobLogger.Info().Msg("Cleaning up job resources...")
+
+	if err := handler.Cleanup(e.ctx, job, execRecord, jobLogger); err != nil {
+		jobLogger.Error().Err(err).Msg("Job cleanup failed.")
+	}
+
+	jobLogger.Info().Msg("✓ Job cleanup complete.")
+	jobLogger.Info().Msgf("🏁 Finished job execution. Final state: %s", e.getJobState(jobName))
+}
+
+// Helper to dereference string pointer for logging, returning "null" if nil
+func derefString(s *string) string {
+	if s == nil {
+		return "null"
+	}
+	return *s
 }
 
 // markSkippedJobs iterates through jobs that are still PENDING after the main loop
@@ -555,8 +571,8 @@ func (e *Executor) collectFinalResults() []models.JobExecutionRecord {
 					ZoweProfile: e.ctx.Config.Config.Profile,
 					HLQ:         hlq,
 					Initiator: types.Initiator{
-						Type:   "user",
-						Id:     os.Getenv("USER"),
+						Type:   "system",
+						Id:     "grace-executor",
 						Tenant: host,
 					},
 					WorkflowId: e.ctx.WorkflowId,
