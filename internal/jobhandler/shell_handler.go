@@ -184,35 +184,51 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 	}
 
 	for _, outputSpec := range job.Outputs {
-		// zos:// and zos-temp:// outputs will be written to local stage first, then uploaded.
-		// The script should write to a path derived from GRACE_OUTPUT_<DDNAME>
 		virtualPath := outputSpec.Path
 		ddName := strings.ToUpper(outputSpec.Name)
-		var derivedLocalName string
+		var localPathForEnv string
 
-		if strings.HasPrefix(virtualPath, "zos://") {
-			resource := strings.TrimPrefix(virtualPath, "zos://")
-			dsnNameParts := strings.Split(resource, "(")
-			if len(dsnNameParts) > 1 {
-				derivedLocalName = strings.TrimSuffix(dsnNameParts[1], ")")
-			} else {
-				qualifiers := strings.Split(dsnNameParts[0], ".")
-				derivedLocalName = qualifiers[len(qualifiers)-1]
+		// Resolve the path first to know its absolute/final form
+		resolvedPath, err := paths.ResolvePath(ctx, job, virtualPath)
+		if err != nil {
+			logger.Error().Err(err).Str("virtual_path", virtualPath).Msg("Failed to resolve output path for setting env var.")
+
+			// This is a pre-script-execution setup failure, we should fail the job
+			record.FinishTime = time.Now().Format(time.RFC3339)
+			record.DurationMs = time.Since(startTime).Milliseconds()
+			record.SubmitResponse = &types.ZoweRfj{Success: false, Error: &types.ZoweRfjError{Msg: fmt.Sprintf("Output path resolution failed for env setup: %s", err.Error())}}
+			return record
+		}
+
+		if strings.HasPrefix(virtualPath, "zos://") || strings.HasPrefix(virtualPath, "zos-temp://") || strings.HasPrefix(virtualPath, "local-temp://") {
+			// These types are staged in LocalStageDir. Script writes to LocalStageDir/derivedLocalName
+			var derivedLocalName string
+
+			if strings.HasPrefix(virtualPath, "zos://") {
+				resource := strings.TrimPrefix(virtualPath, "zos://")
+				dsnNameParts := strings.Split(resource, "(")
+				if len(dsnNameParts) > 1 {
+					derivedLocalName = strings.TrimSuffix(dsnNameParts[1], ")")
+				} else {
+					qualifiers := strings.Split(dsnNameParts[0], ".")
+					derivedLocalName = qualifiers[len(qualifiers)-1]
+				}
+			} else if strings.HasPrefix(virtualPath, "zos-temp://") {
+				derivedLocalName = ddName
+			} else { // local-temp://
+				derivedLocalName = strings.TrimPrefix(virtualPath, "local-temp://")
 			}
-		} else if strings.HasPrefix(virtualPath, "zos-temp://") {
-			derivedLocalName = ddName // Script writes to LocalStageDir/DDNAME
-		} else if strings.HasPrefix(virtualPath, "local-temp://") {
-			derivedLocalName = strings.TrimPrefix(virtualPath, "local-temp://") // Script writes to LocalStageDir/resource
+			localPathForEnv = filepath.Join(ctx.LocalStageDir, derivedLocalName)
+		} else if strings.HasPrefix(virtualPath, "file://") {
+			localPathForEnv = resolvedPath
 		} else {
-			// Not a type that ShellHandler typically "uploads" or manages in stage this way.
-			logger.Warn().Str("virtual_path", virtualPath).Msgf("Shell output path %s has an unsupported scheme for GRACE_OUTPUT_ environment variable.", virtualPath)
+			logger.Warn().Str("virtual_path", virtualPath).Msgf("Shell output path %s has an unsupported scheme for GRACE_OUTPUT_ environment variable setting.", virtualPath)
 			continue
 		}
 
-		localStagePathForEnv := filepath.Join(ctx.LocalStageDir, derivedLocalName)
 		envVarName := fmt.Sprintf("GRACE_OUTPUT_%s", ddName)
-		envVars = append(envVars, fmt.Sprintf("%s=%s", envVarName, localStagePathForEnv))
-		logger.Debug().Str("env_var", envVarName).Str("value", localStagePathForEnv).Msg("Set output environment variable")
+		envVars = append(envVars, fmt.Sprintf("%s=%s", envVarName, localPathForEnv))
+		logger.Debug().Str("env_var", envVarName).Str("value", localPathForEnv).Msg("Set output environment variable")
 	}
 
 	// --- Script execution ---
