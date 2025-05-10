@@ -18,24 +18,24 @@ datasets:
 
 jobs:
   - name: CMPHELLO
-    step: compile
+    type: compile
     inputs:
       - name: SYSIN
         path: src://hello.cbl
     outputs:
       - name: SYSLIN
-        path: temp://hello.obj
+        path: zos-temp://hello.obj
 
   - name: LNKHELLO
-    step: linkedit
+    type: linkedit
     depends_on: [CMPHELLO]
     program: HELLO
     inputs:
       - name: SYSLIN
-        path: temp://hello.obj
+        path: zos-temp://hello.obj
 
 
   - name: RUNHELLO
-    step: execute
+    type: execute
     program: HELLO
     depends_on: [LNKHELLO]
