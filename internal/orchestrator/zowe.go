@@ -412,30 +412,63 @@ func (o *zoweOrchestrator) cleanupTemporaryDatasets(ctx *context.ExecutionContex
 
 	for _, job := range ctx.Config.Jobs {
 		for _, outputSpec := range job.Outputs {
-			if strings.HasPrefix(outputSpec.Path, "temp://") && !outputSpec.Keep {
-				dsnToDelete, exists := ctx.ResolvedPaths[outputSpec.Path]
+			logger.Debug().
+				Str("job_cleanup_scan", job.Name).
+				Str("output_dd", outputSpec.Name).
+				Str("output_path", outputSpec.Path).
+				Bool("output_keep", outputSpec.Keep).
+				Msg("Scanning output for cleanup eligibility")
+
+			isZosTemp := strings.HasPrefix(outputSpec.Path, "zos-temp://")
+			isLocalTemp := strings.HasPrefix(outputSpec.Path, "local-temp://")
+
+			if (isZosTemp || isLocalTemp) && !outputSpec.Keep {
+				resolvedIdentifier, exists := ctx.ResolvedPaths[outputSpec.Path]
 				if !exists {
 					logger.Warn().Str("job", job.Name).Str("virtual_path", outputSpec.Path).Msg("Temporary output path not found in resolved paths, cannot clean up.")
 					continue
 				}
 
-				logger.Info().Str("dsn", dsnToDelete).Msgf("Attempting to clean temporary dataset for output '%s' ('%s') of job '%s'", outputSpec.Name, outputSpec.Path, job.Name)
-
-				if err := zowe.DeleteDatasetIfExists(ctx, dsnToDelete); err != nil {
-					logger.Error().Err(err).Str("dsn", dsnToDelete).Msg("Failed to delete temporary dataset.")
-					failedCleanupCount++
+				if isZosTemp {
+					dsnToDelete := resolvedIdentifier
+					logger.Info().Str("dsn", dsnToDelete).Msgf("Attempting to clean zos-temporary dataset for output '%s' ('%s') of job '%s'", outputSpec.Name, outputSpec.Path, job.Name)
+					if err := zowe.DeleteDatasetIfExists(ctx, dsnToDelete); err != nil {
+						logger.Error().Err(err).Str("dsn", dsnToDelete).Msg("Failed to delete zos-temporary dataset.")
+						failedCleanupCount++
+					} else {
+						logger.Info().Str("dsn", dsnToDelete).Msg("Successfully cleaned zos-temporary dataset.")
+						cleanedCount++
+					}
 				} else {
-					logger.Info().Str("dsn", dsnToDelete).Msg("Successfully cleaned temporary dataset.")
-					cleanedCount++
+					// resolvedIdentifier for local-temp is the filename part
+					localPathToDelete := filepath.Join(ctx.LocalStageDir, resolvedIdentifier)
+					logger.Info().Str("local_path", localPathToDelete).Msgf("Attempting to clean local-temporary file for output '%s' ('%s') of job '%s'", outputSpec.Name, outputSpec.Path, job.Name)
+
+					if err := os.Remove(localPathToDelete); err != nil && !os.IsNotExist(err) {
+						logger.Error().Err(err).Str("local_path", localPathToDelete).Msg("Failed to delete local-temporary file.")
+						failedCleanupCount++
+					} else {
+						if os.IsNotExist(err) {
+							logger.Info().Str("local_path", localPathToDelete).Msg("Local-temporary file already deleted or never existed.")
+						} else {
+							logger.Info().Str("local_path", localPathToDelete).Msg("Successfully cleaned local-temporary file.")
+						}
+						cleanedCount++
+					}
 				}
-			} else if outputSpec.Keep {
-				dsnToNotDelete, exists := ctx.ResolvedPaths[outputSpec.Path]
+			} else if (isZosTemp || isLocalTemp) && outputSpec.Keep {
+				resolvedIdentifierToKeep, exists := ctx.ResolvedPaths[outputSpec.Path]
 				if exists {
-					logger.Info().Str("dsn", dsnToNotDelete).Msg("Skipping cleanup of temporary dataset due to 'keep: true' flag.")
+					pathType := "dataset"
+					if isLocalTemp {
+						pathType = "file"
+						resolvedIdentifierToKeep = filepath.Join(ctx.LocalStageDir, resolvedIdentifierToKeep)
+					}
+					logger.Info().Str(pathType, resolvedIdentifierToKeep).Msgf("Skipping cleanup of temporary %s due to 'keep: true' flag for output '%s' of job '%s'.", pathType, outputSpec.Name, job.Name)
 				}
 			}
 		}
 	}
 
-	logger.Info().Msgf("Temporary dataset cleanup summary: %d datasets processed for deletion, %d failures", cleanedCount+failedCleanupCount, failedCleanupCount)
+	logger.Info().Msgf("Temporary dataset cleanup summary: %d item(s) processed for deletion, %d failure(s).", cleanedCount, failedCleanupCount)
 }
