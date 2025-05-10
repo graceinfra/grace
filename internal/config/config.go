@@ -27,7 +27,7 @@ var allowedTypes = map[string]bool{
 var ddNameRegex = regexp.MustCompile(`^[A-Z#$@][A-Z0-9#$@]{0,7}$`)
 
 // Basic virtual path check (e.g., scheme://resource)
-var virtualPathRegex = regexp.MustCompile(`^[a-zA-Z]+://.+`)
+var virtualPathRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9-]*://.+`)
 
 func LoadGraceConfig(configPath string) (*types.GraceConfig, string, error) {
 	absPath, err := filepath.Abs(configPath)
@@ -197,7 +197,7 @@ func validateSyntax(cfg *types.GraceConfig, registry *jobhandler.HandlerRegistry
 
 		// Validate job.Type
 		if job.Type == "" {
-			errs = append(errs, fmt.Sprintf("%s: field 'step' is required", jobCtx))
+			errs = append(errs, fmt.Sprintf("%s: field 'type' is required", jobCtx))
 		} else if registry != nil { // Check against job handler registry
 			handler, exists := registry.Get(job.Type)
 			if !exists {
