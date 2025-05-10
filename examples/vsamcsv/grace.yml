@@ -15,25 +15,25 @@ datasets:
 
 jobs:
   - name: COMPILE
-    step: compile
+    type: compile
     inputs:
       - name: SYSIN
         path: src://vsamcsv.cbl
     outputs:
       - name: SYSLIN
-        path: temp://vsamcsv.obj
+        path: zos-temp://vsamcsv.obj
 
   - name: LINK
-    step: linkedit
+    type: linkedit
     depends_on: [COMPILE]
     program: VSAMCSV
     inputs:
       - name: SYSLIN
-        path: temp://vsamcsv.obj
+        path: zos-temp://vsamcsv.obj
 
 
   - name: RUN
-    step: execute
+    type: execute
     depends_on: [LINK]
     program: VSAMCSV
     inputs:
@@ -41,4 +41,26 @@ jobs:
         path: zos://IBMUSER.VSAMDEMO.KSDS
     outputs:
       - name: CSVOUT
-        path: temp://vsam_extract.csv
+        path: zos-temp://vsam_extract.csv
+
+  - name: LOADCSV
+    type: shell
+    depends_on: [RUN]
+    with:
+      inline: |
+        echo "CSV data from mainframe has been downloaded by Grace to: $GRACE_INPUT_CSVDL"
+        echo "Content of the CSV file (first 5 lines):"
+        head -n 5 "$GRACE_INPUT_CSVDL"
+        
+        # Example: copy it to a persistent location in the current directory (where grace is run)
+        cp "$GRACE_INPUT_CSVDL" ./final_vsam_extract.csv
+        echo "Copied to ./final_vsam_extract.csv"
+
+        echo "Line count:"
+        wc -l "$GRACE_INPUT_CSVDL"
+    inputs:
+      - name: CSVDL
+        path: zos-temp://vsam_extract.csv
+    outputs:
+      - name: LOCALCPY
+        path: file://final_vsam_extract.csv
