@@ -87,170 +87,177 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 			logCtx = log.With().Str("job_name", job.Name).Logger()
 		}
 
+		isJCLJobType := job.Type == "compile" || job.Type == "linkedit" || job.Type == "execute"
+
 		// --- Compile JCL (conditional) ---
-		if !noCompile {
-			logCtx.Info().Msgf("Generating JCL -> %s", jclOutPath)
+		if isJCLJobType {
+			if !noCompile {
+				logCtx.Info().Msgf("Generating JCL -> %s", jclOutPath)
 
-			// --- Determine template ---
+				// --- Determine template ---
 
-			var templatePath string
-			jobType := job.Type
+				var templatePath string
+				jobType := job.Type
 
-			if job.Template != "" {
-				templatePath = job.Template
-			} else if jobType != "" {
-				switch jobType {
-				case "compile":
-					templatePath = "files/compile.jcl.tmpl"
-				case "linkedit":
-					templatePath = "files/linkedit.jcl.tmpl"
-				case "execute":
-					templatePath = "files/execute.jcl.tmpl"
-				default:
-					logCtx.Error().Str("type", jobType).Msg("Unsupported job type")
-					return fmt.Errorf("unsupported job type %q for job %q", jobType, job.Name)
+				if job.Template != "" {
+					templatePath = job.Template
+				} else if jobType != "" {
+					switch jobType {
+					case "compile":
+						templatePath = "files/compile.jcl.tmpl"
+					case "linkedit":
+						templatePath = "files/linkedit.jcl.tmpl"
+					case "execute":
+						templatePath = "files/execute.jcl.tmpl"
+					default:
+						logCtx.Error().Str("type", jobType).Msg("Unsupported job type")
+						return fmt.Errorf("unsupported job type %q for job %q", jobType, job.Name)
+					}
+				} else {
+					logCtx.Error().Str("type", jobType).Msg("No job type or template defined")
+					return fmt.Errorf("job %q has no type or template defined", job.Name)
 				}
+
+				// --- Generate DD statements ---
+
+				ddStatements, err := jcl.GenerateDDStatements(job, ctx)
+				if err != nil {
+					logCtx.Error().Err(err).Msg("Failed to generate DD statements")
+					return err // Stop decking process if DDs fail
+				}
+
+				// --- Prepare template data ---
+				programName := resolver.ResolveProgramName(job, graceCfg) // Used for PGM= or member name
+				compilerPgm := resolver.ResolveCompilerPgm(job, graceCfg)
+				compilerParms := resolver.ResolveCompilerParms(job, graceCfg)
+				compilerSteplib := resolver.ResolveCompilerSteplib(job, graceCfg)
+				linkerPgm := resolver.ResolveLinkerPgm(job, graceCfg)
+				linkerParms := resolver.ResolveLinkerParms(job, graceCfg)
+				linkerSteplib := resolver.ResolveLinkerSteplib(job, graceCfg)
+				loadLib := resolver.ResolveLoadLib(job, graceCfg) // Get potentially overridden loadlib
+
+				data := map[string]string{
+					"JobName":         job.Name,
+					"WorkflowId":      "DECK-RUN",
+					"ProgramName":     programName, // Resolved program name
+					"LoadLib":         loadLib,     // Resolved load library
+					"CompilerPgm":     compilerPgm,
+					"CompilerParms":   compilerParms,
+					"CompilerSteplib": compilerSteplib, // Pass resolved value (might be "")
+					"LinkerPgm":       linkerPgm,
+					"LinkerParms":     linkerParms,
+					"LinkerSteplib":   linkerSteplib, // Pass resolved value (might be "")
+					"DDStatements":    ddStatements,
+				}
+
+				funcMap := template.FuncMap{
+					"ToUpper": strings.ToUpper,
+				}
+
+				err = grctemplate.WriteTplWithFuncs(templatePath, jclOutPath, data, funcMap)
+				if err != nil {
+					logCtx.Error().Err(err).Str("template", templatePath).Msg("Failed to write JCL template")
+					return fmt.Errorf("failed to write %s: %w", jclFileName, err)
+				}
+				logCtx.Info().Str("output_path", jclOutPath).Msg("✓ JCL generated")
 			} else {
-				logCtx.Error().Str("type", jobType).Msg("No job type or template defined")
-				return fmt.Errorf("job %q has no type or template defined", job.Name)
+				logCtx.Info().Msgf("Skipping JCL compilation (--no-compile).")
 			}
 
-			// --- Generate DD statements ---
-
-			ddStatements, err := jcl.GenerateDDStatements(job, ctx)
-			if err != nil {
-				logCtx.Error().Err(err).Msg("Failed to generate DD statements")
-				return err // Stop decking process if DDs fail
-			}
-
-			// --- Prepare template data ---
-			programName := resolver.ResolveProgramName(job, graceCfg) // Used for PGM= or member name
-			compilerPgm := resolver.ResolveCompilerPgm(job, graceCfg)
-			compilerParms := resolver.ResolveCompilerParms(job, graceCfg)
-			compilerSteplib := resolver.ResolveCompilerSteplib(job, graceCfg)
-			linkerPgm := resolver.ResolveLinkerPgm(job, graceCfg)
-			linkerParms := resolver.ResolveLinkerParms(job, graceCfg)
-			linkerSteplib := resolver.ResolveLinkerSteplib(job, graceCfg)
-			loadLib := resolver.ResolveLoadLib(job, graceCfg) // Get potentially overridden loadlib
-
-			data := map[string]string{
-				"JobName":         job.Name,
-				"WorkflowId":      "DECK-RUN",
-				"ProgramName":     programName, // Resolved program name
-				"LoadLib":         loadLib,     // Resolved load library
-				"CompilerPgm":     compilerPgm,
-				"CompilerParms":   compilerParms,
-				"CompilerSteplib": compilerSteplib, // Pass resolved value (might be "")
-				"LinkerPgm":       linkerPgm,
-				"LinkerParms":     linkerParms,
-				"LinkerSteplib":   linkerSteplib, // Pass resolved value (might be "")
-				"DDStatements":    ddStatements,
-			}
-
-			funcMap := template.FuncMap{
-				"ToUpper": strings.ToUpper,
-			}
-
-			err = grctemplate.WriteTplWithFuncs(templatePath, jclOutPath, data, funcMap)
-			if err != nil {
-				logCtx.Error().Err(err).Str("template", templatePath).Msg("Failed to write JCL template")
-				return fmt.Errorf("failed to write %s: %w", jclFileName, err)
-			}
-			logCtx.Info().Str("output_path", jclOutPath).Msg("✓ JCL generated")
-		} else {
-			logCtx.Info().Msgf("Skipping JCL compilation (--no-compile).")
-		}
-
-		// --- Upload files (conditional) ---
-		if !noUpload {
-			// Ensure PDS exist for JCL and COBOL
-			if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.JCL); err != nil {
-				return err
-			}
-
-			// --- Resolve and upload COBOL ---
-			log.Info().Msg("Scanning for and uploading required source files...")
-			uploadedSources := make(map[string]bool) // Track unique local paths uploaded: localPath -> true
-
-			for _, job := range graceCfg.Jobs {
-				jobLogCtx := log.With().Str("job", job.Name).Logger()
-
-				targetSrcPDS := resolver.ResolveSRCDataset(job, graceCfg)
-				if targetSrcPDS == "" {
-					continue
+			// --- Upload files (conditional) ---
+			if !noUpload {
+				// Ensure PDS exist for JCL and COBOL
+				if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.JCL); err != nil {
+					return err
 				}
 
-				// Ensure the target SRC PDS exists (do this once per needed PDS)
-				// TODO: Optimize EnsurePDSExists check - maybe track checked PDSs? For now, check each time.
-				if err := zowe.EnsurePDSExists(ctx, targetSrcPDS); err != nil {
-					jobLogCtx.Error().Err(err).Str("dataset", targetSrcPDS).Msg("Failed ensuring SRC PDS exists")
-					return err // Fail early
-				}
+				// --- Resolve and upload COBOL ---
+				log.Info().Msg("Scanning for and uploading required source files...")
+				uploadedSources := make(map[string]bool) // Track unique local paths uploaded: localPath -> true
 
-				// Check inputs for src:// paths for this job
-				for _, inputSpec := range job.Inputs {
-					if strings.HasPrefix(inputSpec.Path, "src://") {
-						resource := strings.TrimPrefix(inputSpec.Path, "src://")
-						localPath := filepath.Join("src", resource)
+				for _, job := range graceCfg.Jobs {
+					jobLogCtx := log.With().Str("job", job.Name).Logger()
 
-						if _, err := os.Stat(localPath); err != nil {
-							jobLogCtx.Error().Err(err).Str("local_path", localPath).Str("virtual_path", inputSpec.Path).Msg("Source file required by input not found locally")
-							return fmt.Errorf("required source file %q (for %q in job %q) not found at %s", resource, inputSpec.Path, job.Name, localPath)
+					targetSrcPDS := resolver.ResolveSRCDataset(job, graceCfg)
+					if targetSrcPDS == "" {
+						continue
+					}
+
+					// Ensure the target SRC PDS exists (do this once per needed PDS)
+					// TODO: Optimize EnsurePDSExists check - maybe track checked PDSs? For now, check each time.
+					if err := zowe.EnsurePDSExists(ctx, targetSrcPDS); err != nil {
+						jobLogCtx.Error().Err(err).Str("dataset", targetSrcPDS).Msg("Failed ensuring SRC PDS exists")
+						return err // Fail early
+					}
+
+					// Check inputs for src:// paths for this job
+					for _, inputSpec := range job.Inputs {
+						if strings.HasPrefix(inputSpec.Path, "src://") {
+							resource := strings.TrimPrefix(inputSpec.Path, "src://")
+							localPath := filepath.Join("src", resource)
+
+							if _, err := os.Stat(localPath); err != nil {
+								jobLogCtx.Error().Err(err).Str("local_path", localPath).Str("virtual_path", inputSpec.Path).Msg("Source file required by input not found locally")
+								return fmt.Errorf("required source file %q (for %q in job %q) not found at %s", resource, inputSpec.Path, job.Name, localPath)
+							}
+
+							if uploadedSources[localPath] {
+								jobLogCtx.Debug().Str("local_path", localPath).Msg("Source file already uploaded in this deck run.")
+								continue
+							}
+
+							memberName := strings.ToUpper(strings.TrimSuffix(filepath.Base(resource), filepath.Ext(resource)))
+							if err := utils.ValidatePDSMemberName(memberName); err != nil {
+								jobLogCtx.Error().Err(err).Str("virtual_path", inputSpec.Path).Str("derived_member", memberName).Msg("Invalid member name derived from src:// path")
+								return fmt.Errorf("invalid member name %q derived from path %q", memberName, inputSpec.Path)
+							}
+
+							targetMember := fmt.Sprintf("%s(%s)", targetSrcPDS, memberName)
+							jobLogCtx.Info().Str("local_path", localPath).Str("target", targetMember).Msgf("Uploading source file for DD %q...", inputSpec.Name)
+
+							uploadRes, err := zowe.UploadFileToDataset(ctx, localPath, targetMember)
+							if err != nil {
+								jobLogCtx.Error().Err(err).Str("target", targetMember).Msg("Source file upload failed")
+								return fmt.Errorf("failed to upload source %s to %s: %w", localPath, targetMember, err)
+							} // error from UploadFileToDataset
+							jobLogCtx.Info().Str("target", targetMember).Msg("✓ Source file uploaded")
+							if uploadRes != nil && uploadRes.Data.Success && len(uploadRes.Data.APIResponse) > 0 {
+								jobLogCtx.Debug().Str("local_path", localPath).Str("target", targetMember).Msg("Successfully uploaded COBOL source")
+							}
+
+							uploadedSources[localPath] = true
 						}
-
-						if uploadedSources[localPath] {
-							jobLogCtx.Debug().Str("local_path", localPath).Msg("Source file already uploaded in this deck run.")
-							continue
-						}
-
-						memberName := strings.ToUpper(strings.TrimSuffix(filepath.Base(resource), filepath.Ext(resource)))
-						if err := utils.ValidatePDSMemberName(memberName); err != nil {
-							jobLogCtx.Error().Err(err).Str("virtual_path", inputSpec.Path).Str("derived_member", memberName).Msg("Invalid member name derived from src:// path")
-							return fmt.Errorf("invalid member name %q derived from path %q", memberName, inputSpec.Path)
-						}
-
-						targetMember := fmt.Sprintf("%s(%s)", targetSrcPDS, memberName)
-						jobLogCtx.Info().Str("local_path", localPath).Str("target", targetMember).Msgf("Uploading source file for DD %q...", inputSpec.Name)
-
-						uploadRes, err := zowe.UploadFileToDataset(ctx, localPath, targetMember)
-						if err != nil {
-							jobLogCtx.Error().Err(err).Str("target", targetMember).Msg("Source file upload failed")
-							return fmt.Errorf("failed to upload source %s to %s: %w", localPath, targetMember, err)
-						} // error from UploadFileToDataset
-						jobLogCtx.Info().Str("target", targetMember).Msg("✓ Source file uploaded")
-						if uploadRes != nil && uploadRes.Data.Success && len(uploadRes.Data.APIResponse) > 0 {
-							jobLogCtx.Debug().Str("local_path", localPath).Str("target", targetMember).Msg("Successfully uploaded COBOL source")
-						}
-
-						uploadedSources[localPath] = true
 					}
 				}
 			}
 
 			// --- Upload JCL ---
-			if _, err := os.Stat(jclOutPath); err != nil {
-				logCtx.Error().Err(err).Str("path", jclOutPath).Msg("JCL file not found for upload")
-				if noCompile {
-					return fmt.Errorf("cannot upload JCL for job %q: file %s does not exist and --no-compile was specified", job.Name, jclOutPath)
-				} else {
-					return fmt.Errorf("internal error: JCL file %s not found for job %q after compilation attempt", jclOutPath, job.Name)
+
+			if isJCLJobType {
+				if _, err := os.Stat(jclOutPath); err != nil {
+					logCtx.Error().Err(err).Str("path", jclOutPath).Msg("JCL file not found for upload")
+					if noCompile {
+						return fmt.Errorf("cannot upload JCL for job %q: file %s does not exist and --no-compile was specified", job.Name, jclOutPath)
+					} else {
+						return fmt.Errorf("internal error: JCL file %s not found for job %q after compilation attempt", jclOutPath, job.Name)
+					}
 				}
-			}
 
-			logCtx.Info().Str("target_member", jobNameUpper).Msg("Uploading JCL deck...")
+				logCtx.Info().Str("target_member", jobNameUpper).Msg("Uploading JCL deck...")
 
-			targetJCL := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, jobNameUpper)
-			jclUploadRes, err := zowe.UploadFileToDataset(ctx, jclOutPath, targetJCL)
-			if err != nil {
-				return fmt.Errorf("failed to upload JCL %s to %s: %w", jclOutPath, targetJCL, err)
-			}
+				targetJCL := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, jobNameUpper)
+				jclUploadRes, err := zowe.UploadFileToDataset(ctx, jclOutPath, targetJCL)
+				if err != nil {
+					return fmt.Errorf("failed to upload JCL %s to %s: %w", jclOutPath, targetJCL, err)
+				}
 
-			logCtx.Info().Str("target", targetJCL).Msg("✓ JCL deck uploaded")
-			if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
-				logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("JCL upload details")
+				logCtx.Info().Str("target", targetJCL).Msg("✓ JCL deck uploaded")
+				if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
+					logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("JCL upload details")
+				}
+			} else {
+				logCtx.Info().Msg("Skipping uploads (--no-upload).")
 			}
-		} else {
-			logCtx.Info().Msg("Skipping uploads (--no-upload).")
 		}
 
 	}
