@@ -114,7 +114,7 @@ func UploadFileToDataset(ctx *context.ExecutionContext, path, member string) (*u
 	// 'member' here is the full DSN string, potentially DSN(MEMBER)
 	err := DeleteDatasetIfExists(ctx, member)
 	if err != nil {
-		log.Error().Err(err).Str("target_dataset", member).Msg("Pre-upload deletion of existing target failed.")
+		log.Error().Err(err).Str("component", "zowe_cli").Str("target_dataset", member).Msg("Pre-upload deletion of existing target failed.")
 		return nil, fmt.Errorf("failed to delete existing target %s before upload: %w", member, err)
 	}
 
@@ -136,6 +136,51 @@ func UploadFileToDataset(ctx *context.ExecutionContext, path, member string) (*u
 	}
 
 	return uploadRes, nil
+}
+
+// DownloadFile downloads a z/OS dataset or member to a local file path using Zowe CLI.
+// targetLocalPath is the full path where the file should be saved locally.
+// datasetName is the fully qualified z/OS dataset name, can include a member like DSN(MEMBER).
+func DownloadFile(ctx *context.ExecutionContext, targetLocalPath, datasetName string) error {
+	zoweLogger := log.With().
+		Str("component", "zowe_cli").
+		Str("workflow_id", ctx.WorkflowId.String()).
+		Str("dsn", datasetName).
+		Str("local_path", targetLocalPath).
+		Logger()
+
+	// Using --binary to ensure correct transfer for load modules or binary files
+	args := []string{"zos-files", "download", "data-set", datasetName, "--file", targetLocalPath, "--binary", "--rfj"}
+
+	zoweLogger.Debug().Msg("Attempting to download dataset.")
+	out, err := runZowe(ctx, args...)
+	if err != nil {
+		zoweLogger.Error().Err(err).Msg("Zowe CLI process execution failed during download attempt.")
+		return fmt.Errorf("zowe CLI process execution failed while trying to download '%s' to '%s': %w", datasetName, targetLocalPath, err)
+	}
+
+	var dlRes types.ZoweRfj
+	if unmarshalErr := json.Unmarshal(out, &dlRes); unmarshalErr != nil {
+		zoweLogger.Error().Err(unmarshalErr).Str("raw_output", string(out)).Msg("Failed to unmarshal Zowe download response.")
+		return fmt.Errorf("failed to parse Zowe download response for '%s': %w. Raw output: %s", datasetName, unmarshalErr, string(out))
+	}
+
+	if !dlRes.Success {
+		errMsg := fmt.Sprintf("Zowe CLI reported download failure for '%s'", datasetName)
+		if dlRes.Error != nil && dlRes.Error.Msg != "" {
+			errMsg = fmt.Sprintf("%s: %s", errMsg, dlRes.Error.Msg)
+			if dlRes.Error.Additional != "" {
+				errMsg = fmt.Sprintf("%s. Details: %s", errMsg, dlRes.Error.Additional)
+			}
+		} else if dlRes.Message != "" { // Fallback to general message
+			errMsg = fmt.Sprintf("%s: %s", errMsg, dlRes.Message)
+		}
+		zoweLogger.Error().Str("zowe_error_msg", dlRes.GetError()).Str("zowe_stdout", dlRes.Stdout).Str("zowe_stderr", dlRes.Stderr).Msg(errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	zoweLogger.Info().Msg("Dataset/member downloaded successfully.")
+	return nil
 }
 
 type listRes struct {
