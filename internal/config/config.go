@@ -19,6 +19,7 @@ var allowedTypes = map[string]bool{
 	"execute":  true,
 	"compile":  true,
 	"linkedit": true,
+	"shell":    true,
 }
 
 // --- Define validation rules for DD names and virtual paths ---
@@ -310,8 +311,9 @@ func validateSyntax(cfg *types.GraceConfig, registry *jobhandler.HandlerRegistry
 				isLocalTemp := strings.HasPrefix(inputSpec.Path, "local-temp://")
 				isSrc := strings.HasPrefix(inputSpec.Path, "src://")
 				isZos := strings.HasPrefix(inputSpec.Path, "zos://")
+				isFile := strings.HasPrefix(inputSpec.Path, "file://")
 
-				if !isZosTemp && !isLocalTemp && !isSrc && !isZos {
+				if !isZosTemp && !isLocalTemp && !isSrc && !isZos && !isFile {
 					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q", inputCtx, inputSpec.Path))
 				}
 			}
@@ -346,8 +348,9 @@ func validateSyntax(cfg *types.GraceConfig, registry *jobhandler.HandlerRegistry
 				isLocalTemp := strings.HasPrefix(outputSpec.Path, "local-temp://")
 				isSrc := strings.HasPrefix(outputSpec.Path, "src://")
 				isZos := strings.HasPrefix(outputSpec.Path, "zos://")
+				isFile := strings.HasPrefix(outputSpec.Path, "file://")
 
-				if !isZosTemp && !isLocalTemp && !isSrc && !isZos {
+				if !isZosTemp && !isLocalTemp && !isSrc && !isZos && !isFile {
 					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q", outputCtx, outputSpec.Path))
 				}
 			}
