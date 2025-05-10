@@ -26,6 +26,8 @@ const (
 	// Dependencies checked and met, ready for submission queue.
 	StateReady JobState = "READY"
 
+	StateDispatching JobState = "DISPATCHING"
+
 	// Terminal state: Job completed successfully (e.g., RC 0).
 	StateSucceeded JobState = "SUCCEEDED"
 
@@ -250,50 +252,60 @@ func (e *Executor) checkAndReadyJobs() {
 func (e *Executor) launchReadyJobs(activeGoroutines *int) int {
 	launchedCount := 0
 
-	// Collect ready jobs first to avoid holding the lock while waiting for semaphore
-	readyJobs := []string{}
+	// Create a list of jobs that are currently StateReady.
+	// This snapshot is important to avoid issues with map iteration while modifying.
+	var jobsToConsider []string
 	e.stateMutex.RLock()
-	for jobName, state := range e.jobStates {
-		if state == StateReady {
-			readyJobs = append(readyJobs, jobName)
+	for name, st := range e.jobStates {
+		if st == StateReady {
+			jobsToConsider = append(jobsToConsider, name)
 		}
 	}
 	e.stateMutex.RUnlock()
 
-	if len(readyJobs) > 0 {
-		e.logger.Debug().Msgf("Found %d READY jobs: %v", len(readyJobs), readyJobs)
+	if len(jobsToConsider) > 0 {
+		e.logger.Debug().Msgf("Considering %d READY jobs for dispatch: %v", len(jobsToConsider), jobsToConsider)
 	}
 
-	for _, jobName := range readyJobs {
+	for _, jobName := range jobsToConsider {
 		jobLogger := e.logger.With().Str("job_name", jobName).Logger()
-		jobLogger.Debug().Msg("Attempting to acquire concurrency slot...")
-		e.concurrencyChan <- struct{}{}
+
+		// Lock to check and change state to DISPATCHING
+		e.stateMutex.Lock()
+		if e.jobStates[jobName] != StateReady {
+			e.stateMutex.Unlock()
+			jobLogger.Debug().Msgf("Job no longer READY (now %s), skipping dispatch attempt.", e.jobStates[jobName])
+			continue
+		}
+
+		e.jobStates[jobName] = StateDispatching
+		e.stateMutex.Unlock()
+
+		jobLogger.Debug().Msg("Job marked DISPATCHING. Attempting to acquire concurrency slot...")
+		e.concurrencyChan <- struct{}{} // Acquire slot (blocks if full)
 		jobLogger.Debug().Msg("Concurrency slot acquired.")
 
-		// Re-check state after acquiring semaphore, before launching goroutine
+		// Re-check state after acquiring semaphore.
+		// It should still be DISPATCHING. If it changed (e.g., to SKIPPED by a very fast dependency failure propagated by checkAndReadyJobs,
+		// or if another part of the code incorrectly modified it), then don't launch.
 		e.stateMutex.Lock()
 		currentState := e.jobStates[jobName]
-		if currentState != StateReady {
+		if currentState != StateDispatching {
 			e.stateMutex.Unlock()
-
-			// State changed while waiting for semaphore (e.g. marked SKIPPED)
-			jobLogger.Debug().Msgf("Job state changed to %s before launch, releasing slot.", currentState)
-			<-e.concurrencyChan
+			jobLogger.Warn().Msgf("Job state changed from DISPATCHING to %s while waiting for/after acquiring slot. Releasing slot, not launching.", currentState)
+			<-e.concurrencyChan // Release the acquired slot
+			// Do NOT change its state back here; its current state (e.g., SKIPPED) is now the truth.
 			continue
 		}
 
 		e.stateMutex.Unlock()
 
 		jobLogger.Info().Msg("🚀 Launching job")
-
 		*activeGoroutines++
-
 		e.wg.Add(1)
 		launchedCount++
-
-		go e.executeJob(jobName)
+		go e.executeJob(jobName) // executeJob will handle a DISPATCHING job
 	}
-
 	return launchedCount
 }
 
