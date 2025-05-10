@@ -82,8 +82,8 @@ func TestValidateGraceConfig(t *testing.T) {
 			name: "Duplicate job names (case-insensitive)",
 			config: modifyConfig(createValidConfig(), func(c *types.GraceConfig) {
 				c.Jobs = append(c.Jobs, &types.Job{
-					Name:   "job1", // Same as JOB1 but different case
-					Step:   "execute",
+					Name: "job1", // Same as JOB1 but different case
+					Type: "execute",
 					Inputs: []types.FileSpec{
 						{
 							Name: "SYSIN",
@@ -98,7 +98,7 @@ func TestValidateGraceConfig(t *testing.T) {
 		{
 			name: "Missing step",
 			config: modifyConfig(createValidConfig(), func(c *types.GraceConfig) {
-				c.Jobs[0].Step = ""
+				c.Jobs[0].Type = ""
 			}),
 			shouldError: true,
 			errContains: "field 'step' is required",
@@ -106,7 +106,7 @@ func TestValidateGraceConfig(t *testing.T) {
 		{
 			name: "Invalid step",
 			config: modifyConfig(createValidConfig(), func(c *types.GraceConfig) {
-				c.Jobs[0].Step = "invalid_step" // not in allowedSteps
+				c.Jobs[0].Type = "invalid_step" // not in allowedSteps
 			}),
 			shouldError: true,
 			errContains: "invalid step",
@@ -139,8 +139,8 @@ func TestValidateGraceConfig(t *testing.T) {
 			name: "Dependency cycle",
 			config: modifyConfig(createValidConfig(), func(c *types.GraceConfig) {
 				c.Jobs = append(c.Jobs, &types.Job{
-					Name:      "JOB2",
-					Step:      "execute",
+					Name: "JOB2",
+					Type: "execute",
 					Inputs: []types.FileSpec{
 						{Name: "SYSIN", Path: "src://job2.jcl"},
 					},
@@ -179,7 +179,7 @@ func TestValidateSyntax(t *testing.T) {
 		cfg := modifyConfig(createValidConfig(), func(c *types.GraceConfig) {
 			c.Config.Profile = ""
 		})
-		errs := validateSyntax(cfg)
+		errs := validateSyntax(cfg, registry)
 		assert.Contains(t, strings.Join(errs, " "), "field 'config.profile' is required")
 	})
 
@@ -426,25 +426,25 @@ func modifyConfig(config *types.GraceConfig, modifier func(*types.GraceConfig)) 
 		for i, job := range config.Jobs {
 			// Deep copy each job
 			newJob := *job
-			
+
 			// Deep copy DependsOn slice
 			if job.DependsOn != nil {
 				newJob.DependsOn = make([]string, len(job.DependsOn))
 				copy(newJob.DependsOn, job.DependsOn)
 			}
-			
+
 			// Deep copy Inputs slice
 			if job.Inputs != nil {
 				newJob.Inputs = make([]types.FileSpec, len(job.Inputs))
 				copy(newJob.Inputs, job.Inputs)
 			}
-			
+
 			// Deep copy Outputs slice
 			if job.Outputs != nil {
 				newJob.Outputs = make([]types.FileSpec, len(job.Outputs))
 				copy(newJob.Outputs, job.Outputs)
 			}
-			
+
 			newConfig.Jobs[i] = &newJob
 		}
 	}
@@ -453,4 +453,3 @@ func modifyConfig(config *types.GraceConfig, modifier func(*types.GraceConfig)) 
 	modifier(&newConfig)
 	return &newConfig
 }
-
