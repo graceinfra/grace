@@ -42,7 +42,7 @@ func PreresolveOutputPaths(cfg *types.GraceConfig) (map[string]string, error) {
 			}
 
 			if strings.HasPrefix(outputSpec.Path, "zos-temp://") {
-				dsn, err := generateTempDSN_Idempotent(hlq, outputSpec)
+				dsn, err := generateZosTempDSN_Idempotent(hlq, outputSpec)
 				if err != nil {
 					return nil, fmt.Errorf("failed to generate DSN for job %q output %q (%s): %w", job.Name, outputSpec.Name, outputSpec.Path, err)
 				}
