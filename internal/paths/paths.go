@@ -21,7 +21,7 @@ func PreresolveOutputPaths(cfg *types.GraceConfig) (map[string]string, error) {
 	resolvedPaths := make(map[string]string)
 	hlq := ""
 	if cfg.Datasets.JCL != "" { // Use JCL dataset's HLQ as the base
-		parts := strings.Split(cfg.Datasets.JCL, ".")
+		parts := strings.Split(cfg.Datasets.JCL, ".") // TODO: Use resolver.GetHLQ or separate HLQ field in grace.yml if JCL can be overriden for hlq assignments THROUGHOUT the codebase
 		if len(parts) > 0 {
 			hlq = parts[0]
 		}
@@ -34,7 +34,7 @@ func PreresolveOutputPaths(cfg *types.GraceConfig) (map[string]string, error) {
 
 	for _, job := range cfg.Jobs {
 		for _, outputSpec := range job.Outputs {
-			if !(strings.HasPrefix(outputSpec.Path, "zos-temp://") || strings.HasPrefix(outputSpec.Path, "local-temp://")) {
+			if !(strings.HasPrefix(outputSpec.Path, "zos-temp://") || strings.HasPrefix(outputSpec.Path, "local-temp://") || strings.HasPrefix(outputSpec.Path, "file://")) {
 				continue
 			}
 			if _, exists := resolvedPaths[outputSpec.Path]; exists {
@@ -61,6 +61,14 @@ func PreresolveOutputPaths(cfg *types.GraceConfig) (map[string]string, error) {
 
 				resolvedPaths[outputSpec.Path] = resource
 				log.Debug().Str("virtual_path", outputSpec.Path).Str("local_indentifier", resource).Msg("Preresolved local-temp:// output path (identifier)")
+			} else if strings.HasPrefix(outputSpec.Path, "file://") {
+				resource := strings.TrimPrefix(outputSpec.Path, "file://")
+				if resource == "" {
+					return nil, fmt.Errorf("file:// path of job %q output %q (%s) cannot be empty", job.Name, outputSpec.Name, outputSpec.Path)
+				}
+
+				resolvedPaths[outputSpec.Path] = resource
+				log.Debug().Str("virtual_path", outputSpec.Path).Str("file_path_identifier", resource).Msg("Preresolved file:// output path (identifier)")
 			}
 		}
 	}
@@ -198,7 +206,17 @@ func ResolvePath(ctx *context.ExecutionContext, job *types.Job, virtualPath stri
 		log.Debug().Str("virtual_path", virtualPath).Str("scheme", scheme).Str("resolved_dsn", dsn).Msg("Resolved zos:// path")
 		return dsn, nil
 
-		// TODO: Add cases for other schemes like file://, s3:// later
+	case "file":
+		// The resource is the path relative to ConfigDir or an absolute path if specified.
+		// Here, we return an absolute path for clarity downstream.
+		if filepath.IsAbs(resource) {
+			log.Debug().Str("virtual_path", virtualPath).Str("scheme", scheme).Str("resolved_abs_path", resource).Msg("Resolved file:// path (absolute)")
+			return resource, nil
+		}
+
+		resolvedFilePath := filepath.Join(ctx.ConfigDir, resource)
+		log.Debug().Str("virtual_path", virtualPath).Str("scheme", scheme).Str("resovled_file_path", resolvedFilePath).Msg("Resolved file:// path (relative to grace.yml directory)")
+		return resolvedFilePath, nil
 
 	default:
 		log.Error().Str("virtual_path", virtualPath).Str("scheme", scheme).Msg("Unsupported virtual path scheme")
