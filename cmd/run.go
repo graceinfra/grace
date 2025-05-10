@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -58,13 +59,15 @@ Use '--only' to selectively run specific jobs.`,
 
 		// --- Prepare ExecutionContext ---
 
+		localStageDir := filepath.Join(logDir, ".local-staging")
 		ctx := &context.ExecutionContext{
-			WorkflowId: workflowId,
-			Config:     graceCfg,
-			ConfigDir:  configDir,
-			LogDir:     logDir,
-			SubmitOnly: submitOnly,
-			GraceCmd:   "run",
+			WorkflowId:    workflowId,
+			Config:        graceCfg,
+			ConfigDir:     configDir,
+			LogDir:        logDir,
+			LocalStageDir: localStageDir,
+			SubmitOnly:    submitOnly,
+			GraceCmd:      "run",
 		}
 
 		// --- Instantiate and run orchestrator ---
