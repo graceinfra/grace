@@ -229,37 +229,38 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 						}
 					}
 				}
-			}
 
-			// --- Upload JCL ---
+				// --- Upload JCL ---
 
-			if isJCLJobType {
-				if _, err := os.Stat(jclOutPath); err != nil {
-					logCtx.Error().Err(err).Str("path", jclOutPath).Msg("JCL file not found for upload")
-					if noCompile {
-						return fmt.Errorf("cannot upload JCL for job %q: file %s does not exist and --no-compile was specified", job.Name, jclOutPath)
-					} else {
-						return fmt.Errorf("internal error: JCL file %s not found for job %q after compilation attempt", jclOutPath, job.Name)
+				if isJCLJobType {
+					if _, err := os.Stat(jclOutPath); err != nil {
+						logCtx.Error().Err(err).Str("path", jclOutPath).Msg("JCL file not found for upload")
+						if noCompile {
+							return fmt.Errorf("cannot upload JCL for job %q: file %s does not exist and --no-compile was specified", job.Name, jclOutPath)
+						} else {
+							return fmt.Errorf("internal error: JCL file %s not found for job %q after compilation attempt", jclOutPath, job.Name)
+						}
 					}
-				}
 
-				logCtx.Info().Str("target_member", jobNameUpper).Msg("Uploading JCL deck...")
+					logCtx.Info().Str("target_member", jobNameUpper).Msg("Uploading JCL deck...")
 
-				targetJCL := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, jobNameUpper)
-				jclUploadRes, err := zowe.UploadFileToDataset(ctx, jclOutPath, targetJCL)
-				if err != nil {
-					return fmt.Errorf("failed to upload JCL %s to %s: %w", jclOutPath, targetJCL, err)
-				}
+					targetJCL := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, jobNameUpper)
+					jclUploadRes, err := zowe.UploadFileToDataset(ctx, jclOutPath, targetJCL)
+					if err != nil {
+						return fmt.Errorf("failed to upload JCL %s to %s: %w", jclOutPath, targetJCL, err)
+					}
 
-				logCtx.Info().Str("target", targetJCL).Msg("✓ JCL deck uploaded")
-				if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
-					logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("JCL upload details")
+					logCtx.Info().Str("target", targetJCL).Msg("✓ JCL deck uploaded")
+					if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
+						logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("JCL upload details")
+					}
+
 				}
 			} else {
-				logCtx.Info().Msg("Skipping uploads (--no-upload).")
+				logCtx.Info().Msg("Uploads globally disabled by --no-upload flag.")
 			}
-		}
 
+		}
 	}
 
 	log.Info().Msg("✓ Deck and upload process completed.")
