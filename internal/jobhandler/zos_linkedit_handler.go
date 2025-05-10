@@ -16,13 +16,13 @@ import (
 	"github.com/rs/zerolog"
 )
 
-type ZosLinkEditHandler struct{}
+type ZosLinkeditHandler struct{}
 
-func (h *ZosLinkEditHandler) Type() string {
+func (h *ZosLinkeditHandler) Type() string {
 	return "linkedit"
 }
 
-func (h *ZosLinkEditHandler) Validate(job *types.Job, cfg *types.GraceConfig) []string {
+func (h *ZosLinkeditHandler) Validate(job *types.Job, cfg *types.GraceConfig) []string {
 	var errs []string
 
 	jobCtx := fmt.Sprintf("job[%s] (type: %s)", job.Name, h.Type())
@@ -48,7 +48,7 @@ func (h *ZosLinkEditHandler) Validate(job *types.Job, cfg *types.GraceConfig) []
 	return errs
 }
 
-func (h *ZosLinkEditHandler) Prepare(ctx *context.ExecutionContext, job *types.Job, logger zerolog.Logger) error {
+func (h *ZosLinkeditHandler) Prepare(ctx *context.ExecutionContext, job *types.Job, logger zerolog.Logger) error {
 	logger.Debug().Msg("Prepare step for ZosLinkeditHandler")
 
 	// For linkedit, the primary output is the member in the load library.
@@ -76,7 +76,7 @@ func (h *ZosLinkEditHandler) Prepare(ctx *context.ExecutionContext, job *types.J
 	return nil
 }
 
-func (h *ZosLinkEditHandler) Execute(ctx *context.ExecutionContext, job *types.Job, logger zerolog.Logger) *models.JobExecutionRecord {
+func (h *ZosLinkeditHandler) Execute(ctx *context.ExecutionContext, job *types.Job, logger zerolog.Logger) *models.JobExecutionRecord {
 	logger.Info().Msg("Executing ZosLinkeditHandler")
 	startTime := time.Now()
 
@@ -157,7 +157,7 @@ func (h *ZosLinkEditHandler) Execute(ctx *context.ExecutionContext, job *types.J
 	return record
 }
 
-func (h *ZosLinkEditHandler) Cleanup(ctx *context.ExecutionContext, job *types.Job, execRecord *models.JobExecutionRecord, logger zerolog.Logger) error {
+func (h *ZosLinkeditHandler) Cleanup(ctx *context.ExecutionContext, job *types.Job, execRecord *models.JobExecutionRecord, logger zerolog.Logger) error {
 	logger.Debug().Msg("Cleanup step for ZosLinkeditHandler (no-op)")
 	return nil
 }
