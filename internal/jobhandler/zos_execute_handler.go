@@ -48,7 +48,7 @@ func (h *ZosExecuteHandler) Prepare(ctx *context.ExecutionContext, job *types.Jo
 	logger.Debug().Msg("Prepare step for ZosExecuteHandler")
 
 	for _, outputSpec := range job.Outputs {
-		if strings.HasPrefix(outputSpec.Path, "zos-temp://") && outputSpec.Keep {
+		if strings.HasPrefix(outputSpec.Path, "zos-temp://") && !outputSpec.Keep {
 			physicalDSN, err := paths.ResolvePath(ctx, job, outputSpec.Path)
 			if err != nil {
 				logger.Error().Err(err).Str("virtual_path", outputSpec.Path).Msg("Failed to resolve temporary output path for pre-deletion.")
