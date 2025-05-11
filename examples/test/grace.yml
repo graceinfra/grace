@@ -1,0 +1,21 @@
+config:
+  profile: zosmf
+  defaults:
+    compiler:
+      steplib: IGY.V6R4M0.SIGYCOMP
+datasets:
+  jcl: TEST.JCL # Grace global JCL DSN, but won't be used for *this* job's JCL body
+  src: TEST.SRC
+  loadlib: IBMUSER.LOAD
+
+jobs:
+  - name: ZOSJOB # Name for Grace's tracking
+    type: execute # Type is still relevant for handler selection
+    jcl: zos://TEST.JCL(TESTJOB) # Points to the existing member
+    program: IEFBR14 # For validation, but actual PGM is in TEST.JCL(TESTJOB)
+    inputs:
+      - name: SRCZOS # For testing src:// upload with --no-upload alongside zos:// jcl
+        path: src://anthrSrc.txt
+    outputs:
+      - name: ZOSOUT
+        path: zos-temp://zosjobout

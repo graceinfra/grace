@@ -1,13 +1,13 @@
 package orchestrator
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"text/template"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -16,7 +16,6 @@ import (
 	"github.com/graceinfra/grace/internal/config"
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/internal/executor"
-	"github.com/graceinfra/grace/internal/jcl"
 	"github.com/graceinfra/grace/internal/jobhandler"
 	"github.com/graceinfra/grace/internal/models"
 	"github.com/graceinfra/grace/internal/paths"
@@ -26,9 +25,8 @@ import (
 	"github.com/graceinfra/grace/internal/zowe"
 )
 
-type zoweOrchestrator struct{} // No fields, state comes from ExecutionContext
+type zoweOrchestrator struct{}
 
-// NewZoweOrchestrator creates a new Zowe-based orchestrator.
 func NewZoweOrchestrator() Orchestrator {
 	return &zoweOrchestrator{}
 }
@@ -75,191 +73,225 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 			continue
 		}
 
-		jobNameUpper := strings.ToUpper(job.Name)
-		jclFileName := fmt.Sprintf("%s.jcl", job.Name)
-		jclOutPath := filepath.Join(deckDir, jclFileName)
+		jclLocalOutPath := filepath.Join(deckDir, fmt.Sprintf("%s.jcl", job.Name))
 
 		// Initialize contextual logger
 		logCtx := log.Logger
-		if ctx.WorkflowId != uuid.Nil {
+		if ctx.WorkflowId != uuid.Nil && !bytes.Equal(ctx.WorkflowId[:], make([]byte, 16)) {
 			logCtx = log.With().Str("job_name", job.Name).Str("workflow_id", ctx.WorkflowId.String()).Logger()
 		} else {
 			logCtx = log.With().Str("job_name", job.Name).Logger()
 		}
 
-		isJCLJobType := job.Type == "compile" || job.Type == "linkedit" || job.Type == "execute"
+		isZosJobType := job.Type == "compile" || job.Type == "linkedit" || job.Type == "execute"
 
-		// --- Compile JCL (conditional) ---
-		if isJCLJobType {
+		if !isZosJobType {
+			logCtx.Debug().Str("job_type", job.Type).Msg("Skipping JCL generation for non-ZOS job type")
+			continue // Skip JCL processing for non-ZOS job types like "shell"
+		}
+
+		var renderedJCLContent string
+		var err error
+		var skipJCLProcessingAndUpload bool
+
+		// --- Determine JCL source and render/prepare ---
+
+		if job.JCL != "" && strings.HasPrefix(job.JCL, "zos://") {
+			// Case 1: use existing JCL on z/OS
+			logCtx.Info().Str("jcl_source", job.JCL).Msg("Using existing JCL from mainframe. No local JCL generation or upload for this job's JCL.")
+			skipJCLProcessingAndUpload = true
+		} else if job.JCL != "" && strings.HasPrefix(job.JCL, "file://") {
+			// Case 2: user provided local JCL file (static or template)
+			if noCompile {
+				logCtx.Info().Str("jcl_source", job.JCL).Msg("Skipping compilation of user-provided JCL (--no-compile). Will attempt to use existing local file if uploading.")
+			} else {
+				logCtx.Info().Str("jcl_source", job.JCL).Msgf("Processing user-provided JCL file -> %s", jclLocalOutPath)
+			}
+
+			userJCLPath := strings.TrimPrefix(job.JCL, "file://")
+			if !filepath.IsAbs(userJCLPath) {
+				userJCLPath = filepath.Join(ctx.ConfigDir, userJCLPath)
+			}
+
+			userJCLFileContentBytes, readErr := os.ReadFile(userJCLPath)
+			if readErr != nil {
+				return fmt.Errorf("job %s: failed to read user-provided JCL file %s (from %s): %w", job.Name, userJCLPath, job.JCL, readErr)
+			}
+			userJCLFileContent := string(userJCLFileContentBytes)
+
 			if !noCompile {
-				logCtx.Info().Msgf("Generating JCL -> %s", jclOutPath)
+				templateData, prepErr := grctemplate.PrepareJCLTemplateData(ctx, job)
+				if prepErr != nil {
+					return fmt.Errorf("job %s: failed to prepare data for user JCL template: %w", job.Name, prepErr)
+				}
+				renderedJCLContent, err = grctemplate.RenderJCL(userJCLPath, userJCLFileContent, templateData)
+				if err != nil {
+					return fmt.Errorf("job %s: failed to render user-provided JCL template %s: %w", job.Name, userJCLPath, err)
+				}
+			} else {
+				renderedJCLContent = userJCLFileContent
+			}
+		} else {
+			// Case 3: Grace generates JCL using internal default templates
+			if noCompile {
+				logCtx.Info().Msg("Skipping Grace's JCL generation (--no-compile). Will attempt to use existing local file if uploading.")
+			} else {
+				logCtx.Info().Msgf("Generating JCL using Grace internal template -> %s", jclLocalOutPath)
 
-				// --- Determine template ---
+				var internalTemplatePath string
+				switch job.Type {
+				case "compile":
+					internalTemplatePath = "files/compile.jcl.tmpl"
+				case "linkedit":
+					internalTemplatePath = "files/linkedit.jcl.tmpl"
+				case "execute":
+					internalTemplatePath = "files/execute.jcl.tmpl"
+				default:
+					return fmt.Errorf("job %s: unsupported job type %q for internal JCL generation", job.Name, job.Type)
+				}
 
-				var templatePath string
-				jobType := job.Type
+				internalTemplateBytes, readErr := grctemplate.TplFS.ReadFile(internalTemplatePath)
+				if readErr != nil {
+					return fmt.Errorf("job %s: failed to read internal JCL template %s: %w", job.Name, internalTemplatePath, readErr)
+				}
+				internalTemplateContent := string(internalTemplateBytes)
 
-				if job.Template != "" {
-					templatePath = job.Template
-				} else if jobType != "" {
-					switch jobType {
-					case "compile":
-						templatePath = "files/compile.jcl.tmpl"
-					case "linkedit":
-						templatePath = "files/linkedit.jcl.tmpl"
-					case "execute":
-						templatePath = "files/execute.jcl.tmpl"
-					default:
-						logCtx.Error().Str("type", jobType).Msg("Unsupported job type")
-						return fmt.Errorf("unsupported job type %q for job %q", jobType, job.Name)
+				templateData, prepErr := grctemplate.PrepareJCLTemplateData(ctx, job)
+				if prepErr != nil {
+					return fmt.Errorf("job %s: failed to prepare data for internal JCL template: %w", job.Name, prepErr)
+				}
+
+				renderedJCLContent, err = grctemplate.RenderJCL(internalTemplatePath, internalTemplateContent, templateData)
+				if err != nil {
+					return fmt.Errorf("job %s: failed to render internal JCL template %s: %w", job.Name, internalTemplatePath, err)
+				}
+			}
+		}
+
+		// --- Write rendered JCL to .grace/deck/ ---
+
+		// This happens if JCL was generated by Grace or came from a user's file://
+		// and !noCompile. If noCompile, we only write if we actually read and "rendered" (even if static/no template vars)
+
+		if !skipJCLProcessingAndUpload {
+			if renderedJCLContent != "" && (!noCompile || (job.JCL != "" && strings.HasPrefix(job.JCL, "file://"))) {
+				// Write if:
+				// 1. We have content and compilation was not skipped
+				// or
+				// 2. We have content and it's a user file (even if noCompile, we read it for potential upload)
+				writeErr := os.WriteFile(jclLocalOutPath, []byte(renderedJCLContent), 0644)
+				if writeErr != nil {
+					return fmt.Errorf("job %s: failed to write rendered JCL to %s: %w", job.Name, jclLocalOutPath, writeErr)
+				}
+				if !noCompile {
+					logCtx.Info().Str("output_path", jclLocalOutPath).Msg("✓ JCL processed and written locally.")
+				} else if job.JCL != "" && strings.HasPrefix(job.JCL, "file://") {
+					logCtx.Info().Str("output_path", jclLocalOutPath).Str("source_file", job.JCL).Msg("✓ User JCL file copied locally (compilation skipped).")
+				}
+			} else if renderedJCLContent == "" && !noCompile {
+				logCtx.Warn().Msg("No JCL content was rendered or prepared for writing and compilation not skipped. This might be an issue.")
+			}
+		}
+
+		// --- Upload JCL ---
+
+		jobNameUpper := strings.ToUpper(job.Name) // Already have this, but ensure it's available here
+		if !skipJCLProcessingAndUpload { // Only if not using zos:// JCL
+			if !noUpload { // Only if uploads are generally enabled
+				if renderedJCLContent != "" || (noCompile && (job.JCL == "" || strings.HasPrefix(job.JCL, "file://"))) {
+					// Condition to attempt upload:
+					// 1. We have renderedJCLContent (meaning it was generated or read from user file and not --no-compile)
+					// OR
+					// 2. --no-compile is true AND (it's default JCL OR it's a file:// JCL)
+					//    In this case, we rely on jclLocalOutPath possibly existing from a previous run or being the user's file itself.
+
+					// Ensure local JCL file exists before attempting to upload
+					if _, statErr := os.Stat(jclLocalOutPath); os.IsNotExist(statErr) {
+						// If noCompile was true for default JCL, and the file doesn't exist, we can't upload.
+						// If noCompile was true for file:// JCL, and we couldn't read it earlier, we would have errored out.
+						// If renderedJCLContent is empty AND noCompile is true, it means we skipped generation.
+						if noCompile && renderedJCLContent == "" {
+                             logCtx.Info().Str("jcl_local_path", jclLocalOutPath).Msg("JCL generation skipped (--no-compile) and no existing local JCL file to upload.")
+                        } else if renderedJCLContent != "" {
+							return fmt.Errorf("job %s: internal error, JCL file %s expected but not found for upload after processing", job.Name, jclLocalOutPath)
+						}
+					} else { // File exists, proceed with upload
+						targetJCLPDS := resolver.ResolveJCLDataset(job, graceCfg)
+						if targetJCLPDS == "" {
+							return fmt.Errorf("job %s: cannot determine target JCL PDS for JCL upload", job.Name)
+						}
+						if err := zowe.EnsurePDSExists(ctx, targetJCLPDS); err != nil {
+							return fmt.Errorf("job %s: failed to ensure JCL PDS %s exists for upload: %w", job.Name, targetJCLPDS, err)
+						}
+						targetJCLMember := fmt.Sprintf("%s(%s)", targetJCLPDS, jobNameUpper)
+
+						logCtx.Info().Str("local_jcl_path", jclLocalOutPath).Str("target_member", targetJCLMember).Msg("Uploading JCL deck...")
+						_, uploadErr := zowe.UploadFileToDataset(ctx, jclLocalOutPath, targetJCLMember)
+						if uploadErr != nil {
+							return fmt.Errorf("job %s: failed to upload JCL %s to %s: %w", job.Name, jclLocalOutPath, targetJCLMember, uploadErr)
+						}
+						logCtx.Info().Str("target", targetJCLMember).Msg("✓ JCL deck uploaded.")
 					}
 				} else {
-					logCtx.Error().Str("type", jobType).Msg("No job type or template defined")
-					return fmt.Errorf("job %q has no type or template defined", job.Name)
-				}
-
-				// --- Generate DD statements ---
-
-				ddStatements, err := jcl.GenerateDDStatements(job, ctx)
-				if err != nil {
-					logCtx.Error().Err(err).Msg("Failed to generate DD statements")
-					return err // Stop decking process if DDs fail
-				}
-
-				// --- Prepare template data ---
-				programName := resolver.ResolveProgramName(job, graceCfg) // Used for PGM= or member name
-				compilerPgm := resolver.ResolveCompilerPgm(job, graceCfg)
-				compilerParms := resolver.ResolveCompilerParms(job, graceCfg)
-				compilerSteplib := resolver.ResolveCompilerSteplib(job, graceCfg)
-				linkerPgm := resolver.ResolveLinkerPgm(job, graceCfg)
-				linkerParms := resolver.ResolveLinkerParms(job, graceCfg)
-				linkerSteplib := resolver.ResolveLinkerSteplib(job, graceCfg)
-				loadLib := resolver.ResolveLoadLib(job, graceCfg) // Get potentially overridden loadlib
-
-				data := map[string]string{
-					"JobName":         job.Name,
-					"WorkflowId":      "DECK-RUN",
-					"ProgramName":     programName, // Resolved program name
-					"LoadLib":         loadLib,     // Resolved load library
-					"CompilerPgm":     compilerPgm,
-					"CompilerParms":   compilerParms,
-					"CompilerSteplib": compilerSteplib, // Pass resolved value (might be "")
-					"LinkerPgm":       linkerPgm,
-					"LinkerParms":     linkerParms,
-					"LinkerSteplib":   linkerSteplib, // Pass resolved value (might be "")
-					"DDStatements":    ddStatements,
-				}
-
-				funcMap := template.FuncMap{
-					"ToUpper": strings.ToUpper,
-				}
-
-				err = grctemplate.WriteTplWithFuncs(templatePath, jclOutPath, data, funcMap)
-				if err != nil {
-					logCtx.Error().Err(err).Str("template", templatePath).Msg("Failed to write JCL template")
-					return fmt.Errorf("failed to write %s: %w", jclFileName, err)
-				}
-				logCtx.Info().Str("output_path", jclOutPath).Msg("✓ JCL generated")
-			} else {
-				logCtx.Info().Msgf("Skipping JCL compilation (--no-compile).")
+                     // This case means renderedJCLContent is "" and it's not a --no-compile scenario for default/file JCL
+                     // or it's --no-compile and renderedJCLContent is still empty (e.g. default jcl with --no-compile and no pre-existing file)
+                     logCtx.Info().Msg("No JCL content available or generated; JCL upload skipped.")
+                }
+			} else { // noUpload is true
+				logCtx.Info().Msg("JCL Upload globally skipped (--no-upload).")
 			}
+		}
 
-			// --- Upload files (conditional) ---
-			if !noUpload {
-				// Ensure PDS exist for JCL and COBOL
-				if err := zowe.EnsurePDSExists(ctx, graceCfg.Datasets.JCL); err != nil {
-					return err
+		// --- Upload source files (src:// inputs) ---
+
+		if !noUpload {
+			effectiveSrcPDS := resolver.ResolveSRCDataset(job, graceCfg)
+			if effectiveSrcPDS != "" {
+				if err := zowe.EnsurePDSExists(ctx, effectiveSrcPDS); err != nil {
+					return fmt.Errorf("job %s: failed to ensure SRC PDS %s exists: %w", job.Name, effectiveSrcPDS, err)
 				}
 
-				// --- Resolve and upload COBOL ---
-				log.Info().Msg("Scanning for and uploading required source files...")
-				uploadedSources := make(map[string]bool) // Track unique local paths uploaded: localPath -> true
-
-				for _, job := range graceCfg.Jobs {
-					jobLogCtx := log.With().Str("job", job.Name).Logger()
-
-					targetSrcPDS := resolver.ResolveSRCDataset(job, graceCfg)
-					if targetSrcPDS == "" {
-						continue
-					}
-
-					// Ensure the target SRC PDS exists (do this once per needed PDS)
-					// TODO: Optimize EnsurePDSExists check - maybe track checked PDSs? For now, check each time.
-					if err := zowe.EnsurePDSExists(ctx, targetSrcPDS); err != nil {
-						jobLogCtx.Error().Err(err).Str("dataset", targetSrcPDS).Msg("Failed ensuring SRC PDS exists")
-						return err // Fail early
-					}
-
-					// Check inputs for src:// paths for this job
-					for _, inputSpec := range job.Inputs {
-						if strings.HasPrefix(inputSpec.Path, "src://") {
-							resource := strings.TrimPrefix(inputSpec.Path, "src://")
-							localPath := filepath.Join("src", resource)
-
-							if _, err := os.Stat(localPath); err != nil {
-								jobLogCtx.Error().Err(err).Str("local_path", localPath).Str("virtual_path", inputSpec.Path).Msg("Source file required by input not found locally")
-								return fmt.Errorf("required source file %q (for %q in job %q) not found at %s", resource, inputSpec.Path, job.Name, localPath)
-							}
-
-							if uploadedSources[localPath] {
-								jobLogCtx.Debug().Str("local_path", localPath).Msg("Source file already uploaded in this deck run.")
-								continue
-							}
-
-							memberName := strings.ToUpper(strings.TrimSuffix(filepath.Base(resource), filepath.Ext(resource)))
-							if err := utils.ValidatePDSMemberName(memberName); err != nil {
-								jobLogCtx.Error().Err(err).Str("virtual_path", inputSpec.Path).Str("derived_member", memberName).Msg("Invalid member name derived from src:// path")
-								return fmt.Errorf("invalid member name %q derived from path %q", memberName, inputSpec.Path)
-							}
-
-							targetMember := fmt.Sprintf("%s(%s)", targetSrcPDS, memberName)
-							jobLogCtx.Info().Str("local_path", localPath).Str("target", targetMember).Msgf("Uploading source file for DD %q...", inputSpec.Name)
-
-							uploadRes, err := zowe.UploadFileToDataset(ctx, localPath, targetMember)
-							if err != nil {
-								jobLogCtx.Error().Err(err).Str("target", targetMember).Msg("Source file upload failed")
-								return fmt.Errorf("failed to upload source %s to %s: %w", localPath, targetMember, err)
-							} // error from UploadFileToDataset
-							jobLogCtx.Info().Str("target", targetMember).Msg("✓ Source file uploaded")
-							if uploadRes != nil && uploadRes.Data.Success && len(uploadRes.Data.APIResponse) > 0 {
-								jobLogCtx.Debug().Str("local_path", localPath).Str("target", targetMember).Msg("Successfully uploaded COBOL source")
-							}
-
-							uploadedSources[localPath] = true
+				// Check inputs for src:// paths for this job
+				for _, inputSpec := range job.Inputs {
+					if strings.HasPrefix(inputSpec.Path, "src://") {
+						resource := strings.TrimPrefix(inputSpec.Path, "src://")
+						localPath := filepath.Join(ctx.ConfigDir, "src", resource) // src relative to grace.yml
+						
+						if _, statErr := os.Stat(localPath); statErr != nil {
+							return fmt.Errorf("job %s: source file %s (for input %s, DD %s) not found at %s: %w", job.Name, resource, inputSpec.Path, inputSpec.Name, localPath, statErr)
 						}
-					}
-				}
 
-				// --- Upload JCL ---
-
-				if isJCLJobType {
-					if _, err := os.Stat(jclOutPath); err != nil {
-						logCtx.Error().Err(err).Str("path", jclOutPath).Msg("JCL file not found for upload")
-						if noCompile {
-							return fmt.Errorf("cannot upload JCL for job %q: file %s does not exist and --no-compile was specified", job.Name, jclOutPath)
-						} else {
-							return fmt.Errorf("internal error: JCL file %s not found for job %q after compilation attempt", jclOutPath, job.Name)
+						memberName := strings.ToUpper(strings.TrimSuffix(filepath.Base(resource), filepath.Ext(resource)))
+						if err := utils.ValidatePDSMemberName(memberName); err != nil {
+							return fmt.Errorf("job %s: invalid PDS member name '%s' derived from src path '%s': %w", job.Name, memberName, inputSpec.Path, err)
 						}
+
+						targetSrcMember := fmt.Sprintf("%s(%s)", effectiveSrcPDS, memberName)
+						logCtx.Info().Str("local_path", localPath).Str("target", targetSrcMember).Msgf("Uploading source file for DD %s...", inputSpec.Name)
+						_, uploadErr := zowe.UploadFileToDataset(ctx, localPath, targetSrcMember)
+						if uploadErr != nil {
+							return fmt.Errorf("job %s: failed to upload source %s to %s: %w", job.Name, localPath, targetSrcMember, uploadErr)
+						}
+						logCtx.Info().Str("target", targetSrcMember).Msg("✓ Source file uploaded.")
 					}
-
-					logCtx.Info().Str("target_member", jobNameUpper).Msg("Uploading JCL deck...")
-
-					targetJCL := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, jobNameUpper)
-					jclUploadRes, err := zowe.UploadFileToDataset(ctx, jclOutPath, targetJCL)
-					if err != nil {
-						return fmt.Errorf("failed to upload JCL %s to %s: %w", jclOutPath, targetJCL, err)
-					}
-
-					logCtx.Info().Str("target", targetJCL).Msg("✓ JCL deck uploaded")
-					if jclUploadRes != nil && jclUploadRes.Data.Success && len(jclUploadRes.Data.APIResponse) > 0 {
-						logCtx.Debug().Str("from", jclUploadRes.Data.APIResponse[0].From).Str("to", jclUploadRes.Data.APIResponse[0].To).Msg("JCL upload details")
-					}
-
 				}
 			} else {
-				logCtx.Info().Msg("Uploads globally disabled by --no-upload flag.")
+				// Check if any src:// inputs exist when no effectiveSrcPDS is defined
+				for _, inputSpec := range job.Inputs {
+					if strings.HasPrefix(inputSpec.Path, "src://") {
+						logCtx.Warn().Str("input_path", inputSpec.Path).Msg("Job has 'src://' input but no effective 'datasets.src' is defined. Source file cannot be uploaded.")
+						// This could be an error depending on strictness. For now, a warning.
+					}
+				}
 			}
-
+		} else { // noUpload is true
+			logCtx.Info().Msg("Source file uploads skipped (--no-upload).")
+			// Check if any src:// inputs exist, as they won't be uploaded.
+			for _, inputSpec := range job.Inputs {
+				if strings.HasPrefix(inputSpec.Path, "src://") {
+					logCtx.Warn().Str("input_path", inputSpec.Path).Msgf("Job has 'src://' input '%s', but uploads are disabled (--no-upload). This source will not be available on the mainframe unless already present.", inputSpec.Path)
+				}
+			}
 		}
 	}
 
@@ -288,7 +320,7 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext, registry *jobhandl
 
 	// --- Preresolve output paths ---
 
-	log.Debug().Msg("Preresolving output paths...")
+	log.Debug().Msg("Preresolving output paths for run...")
 	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(ctx.Config)
 	if resolveErr != nil {
 		return nil, fmt.Errorf("orchestration failed: could not resolve output paths: %v", resolveErr)

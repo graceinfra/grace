@@ -138,7 +138,7 @@ func validateSyntax(cfg *types.GraceConfig, registry *jobhandler.HandlerRegistry
 	// Potential future validation: check if profile exists in Zowe config
 
 	if cfg.Config.Concurrency < 0 {
-		errs = append(errs, fmt.Sprintf("field 'concurrency' cannot be negative"))
+		errs = append(errs, "field 'concurrency' cannot be negative")
 	}
 
 	// --- Validate 'datasets' section ---
@@ -215,6 +215,51 @@ func validateSyntax(cfg *types.GraceConfig, registry *jobhandler.HandlerRegistry
 		} else if !allowedTypes[job.Type] {
 			allowed := getAllowedStepKeys(allowedTypes)
 			errs = append(errs, fmt.Sprintf("%s: invalid type %q (handler validation skipped); allowed built-in types are: %v", jobCtx, job.Type, allowed))
+		}
+
+		// Validate job.JCL
+		if job.JCL != "" {
+			isZOSJobType := job.Type == "compile" || job.Type == "linkedit" || job.Type == "execute"
+			if !isZOSJobType {
+				errs = append(errs, fmt.Sprintf("%s: 'jcl' field is only applicable to z/OS job types (compile, linkedit, execute), not for type %q", jobCtx, job.Type))
+			} else {
+				if !(strings.HasPrefix(job.JCL, "file://") || strings.HasPrefix(job.JCL, "zos://")) {
+					errs = append(errs, fmt.Sprintf("%s: 'jcl' field must start with 'file://' or 'zos://'", jobCtx))
+				} else if strings.HasPrefix(job.JCL, "zos://") {
+					dsnWithMember := strings.TrimPrefix(job.JCL, "zos://")
+					if dsnWithMember == "" {
+						errs = append(errs, fmt.Sprintf("%s: 'jcl' field 'zos://' path cannot be empty", jobCtx))
+					} else {
+						parts := strings.SplitN(dsnWithMember, "(", 2)
+						if len(parts) == 1 {
+							errs = append(errs, fmt.Sprintf("%s: 'jcl' field 'zos://%s' must specify a PDS member like 'PDS.NAME(MEMBER)'", jobCtx, dsnWithMember))
+							// If just PDS name is valid for some operations in future, adjust this.
+							// If it's a sequential dataset, Zowe submit might handle it, but our primary use case is PDS members for JCL.
+						} else if len(parts) == 2 {
+							baseDsn := parts[0]
+							memberWithSuffix := parts[1]
+							if !strings.HasSuffix(memberWithSuffix, ")") || len(memberWithSuffix) < 2 {
+								errs = append(errs, fmt.Sprintf("%s: 'jcl' field 'zos://%s' has malformed member part", jobCtx, dsnWithMember))
+							} else {
+								member := memberWithSuffix[:len(memberWithSuffix)-1]
+								if err := utils.ValidateDataSetQualifiers(baseDsn); err != nil {
+									errs = append(errs, fmt.Sprintf("%s: invalid base dataset name in 'jcl' field 'zos://%s': %v", jobCtx, dsnWithMember, err))
+								}
+								if err := utils.ValidatePDSMemberName(member); err != nil {
+									errs = append(errs, fmt.Sprintf("%s: invalid member name in 'jcl' field 'zos://%s': %v", jobCtx, dsnWithMember, err))
+								}
+							}
+						}
+					}
+				} else if strings.HasPrefix(job.JCL, "file://") {
+					filePath := strings.TrimPrefix(job.JCL, "file://")
+					if filePath == "" {
+						errs = append(errs, fmt.Sprintf("%s: 'jcl' field 'file://' path cannot be empty", jobCtx))
+					}
+					// Actual file existence will be checked later (e.g., in DeckAndUpload or handler Prepare)
+					// as it's relative to the grace.yml config file directory.
+				}
+			}
 		}
 
 		// Validate job.Datasets if they exist. This applies if

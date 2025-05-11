@@ -1,0 +1,27 @@
+//{{ .JobName | ToUpper }} JOB (ACCT),'{{ .JobName }} VIA TEMPLATE',CLASS=A
+//********************************************************************
+//* EXECUTING PROGRAM: {{ .ProgramName }}
+//* FROM LOADLIB:    {{ .LoadLib }}
+//* WORKFLOW ID:     {{ .WorkflowId }} (will be empty for 'deck')
+//********************************************************************
+//STEP1    EXEC PGM={{ .ProgramName }}
+//STEPLIB  DD DSN={{ .LoadLib }},DISP=SHR
+
+//********* INPUTS ***********
+{{- range .Inputs }}
+//{{ .Name }} DD DSN={{.DSN}},DISP={{.DISP}},
+{{- end }}
+
+//********* OUTPUTS **********
+{{- range .Outputs }}
+//{{ .Name }} DD DSN={{.DSN}},DISP={{.DISP}},
+//             SPACE={{ Default "(TRK,(1,1))" .Space }},
+//             DCB={{ Default "(RECFM=FB,LRECL=80)" .DCB }}
+{{- end }}
+
+//******** ALL DDs BLOCK ********
+//** If you prefer the pre-generated block, use this instead of ranges:
+//* {{ .DDStatements }}
+//*******************************
+//SYSOUT   DD SYSOUT=*
+//SYSUDUMP DD SYSOUT=*

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/graceinfra/grace/internal/context"
 	"github.com/graceinfra/grace/types"
@@ -43,7 +42,7 @@ func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
 	cmd.Stderr = &errBuf // Capture stderr
 	cmd.Stdin = os.Stdin
 
-	err := cmd.Run()
+	_ = cmd.Run()
 
 	// Get stdout content regardless of error
 	stdoutBytes := outBuf.Bytes()
@@ -51,22 +50,7 @@ func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
 
 	// Log stdout content if verbose logging is enabled and stderr is not empty
 	if stdoutString != "" {
-		zoweLogger.Debug().Strs("args", args).Msg("Zowe command stderr output")
-	}
-
-	// Handle process execution errors (e.g., command not found, non-zero exit code)
-	if err != nil {
-		zoweLogger.Error().
-			Err(err).
-			Strs("args", args).
-			Msg("Zowe process execution failed")
-
-		// Process execution failed. Return stdout (it might still contain partial JSON/info)
-		// and a comprehensive error including the original error and stderr.
-		return stdoutBytes, fmt.Errorf("zowe process execution failed for 'zowe %s': %w\nstderr:\n%s",
-			strings.Join(args, " "),
-			err,
-			stdoutString) // Include stderr in the error message only on process failure
+		zoweLogger.Debug().Strs("args", args).Str("stdout", stdoutString).Msg("Zowe command stderr output")
 	}
 
 	// Process execution succeeded (exit code 0).
@@ -306,16 +290,12 @@ func EnsureSDSExists(ctx *context.ExecutionContext, name string) error {
 func DeleteDatasetIfExists(ctx *context.ExecutionContext, dsn string) error {
 	zoweLogger := log.With().Str("component", "zowe_cli").Str("workflow_id", ctx.WorkflowId.String()).Logger()
 
-	out, err := runZowe(ctx, "zos-files", "delete", "data-set", dsn, "-fi", "--rfj")
-	if err != nil {
-		zoweLogger.Error().Err(err).Str("dsn", dsn).Msg("Zowe CLI process failed during delete attempt.")
-		return fmt.Errorf("Zowe CLI process execution failed while trying to delete '%s': %w", dsn, err)
-	}
+	out, _ := runZowe(ctx, "zos-files", "delete", "data-set", dsn, "-fi", "--rfj")
 
 	var deleteRes types.ZoweRfj
 	if unmarshalErr := json.Unmarshal(out, &deleteRes); unmarshalErr != nil {
 		zoweLogger.Error().Err(unmarshalErr).Str("dsn", dsn).Str("raw_output", string(out)).Msg("Failed to unmarshal Zowe delete response.")
-		return fmt.Errorf("failed to parse Zowe delete response for '%s': %w", dsn, err)
+		return fmt.Errorf("failed to parse Zowe delete response for '%s': %w", dsn, unmarshalErr)
 	}
 
 	zoweLogger.Debug().Str("dsn", dsn).Msg("Dataset/member deleted successfully or did not exist.")

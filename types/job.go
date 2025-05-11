@@ -1,9 +1,10 @@
 package types
 
 type Job struct {
-	Name     string `yaml:"name"`
-	Type     string `yaml:"type"`
-	Template string `yaml:"template,omitempty"`
+	Name string `yaml:"name"`
+	Type string `yaml:"type"`
+
+	JCL string `yaml:"jcl,omitempty"` // e.g. `file://./my.jcl`, `file://./my.jcl.tmpl`, `zos://PDS.JCL(MEMBER)`
 
 	ShellWith *ShellWith `yaml:"with"`
 
@@ -51,6 +52,7 @@ type FileSpec struct {
 	Space  string `yaml:"space,omitempty"`
 	DCB    string `yaml:"dcb,omitempty"`
 	DsType string `yaml:"ds_type,omitempty"`
+	Disp string `yaml:"disp,omitempty"`
 	Keep   bool   `yaml:"keep,omitempty"`
 }
 

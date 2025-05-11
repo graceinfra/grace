@@ -10,23 +10,62 @@ import (
 	"time"
 
 	"github.com/graceinfra/grace/internal/context"
+	"github.com/graceinfra/grace/internal/resolver"
 	"github.com/graceinfra/grace/types"
 	"github.com/rs/zerolog/log"
 )
 
-// SubmitJob submits a job via Zowe based on a dataset member.
+// SubmitJob submits a job via Zowe. It determines which JCL to submit based on job.JCL.
+// If job.JCL starts with "zos://", it submits that DSN.
+// Otherwise, it assumes the JCL is in the Grace-managed JCL PDS (datasets.jcl(JOBNAME)).
 // Returns the initial Zowe response or an error. Does NOT wait for completion.
 func SubmitJob(ctx *context.ExecutionContext, job *types.Job) (*types.ZoweRfj, error) {
-	qualifier := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, strings.ToUpper(job.Name))
+	var jclToSubmitDSN string
+	var jclSourceDescription string
 
-	// Note: No spinner managed here; caller should manage submit spinner
-	rawSubmit, err := runZowe(ctx, "zos-jobs", "submit", "data-set", qualifier, "--rfj")
+	if strings.HasPrefix(job.JCL, "zos://") {
+		jclToSubmitDSN = strings.TrimPrefix(job.JCL, "zos://")
+		jclSourceDescription = fmt.Sprintf("existing mainframe JCL ('%s')", job.JCL)
+	} else {
+		// Default: Grace manages the JCL (either its own default template or user's file:// template,
+		// which would have been uploaded to the job's standard JCL PDS member by DeckAndUpload)
+		jclPDS := resolver.ResolveJCLDataset(job, ctx.Config)
+		if jclPDS == "" {
+			errMsg := fmt.Sprintf("JCL PDS not defined in datasets configuration for job %s", job.Name)
+			log.Error().Str("job_name", job.Name).Msg(errMsg)
+			return &types.ZoweRfj{
+				Success: false,
+				Error: &types.ZoweRfjError{
+					Msg: errMsg,
+				},
+			}, fmt.Errorf(errMsg)
+		}
+
+		jclToSubmitDSN = fmt.Sprintf("%s(%s)", jclPDS, strings.ToUpper(job.Name))
+
+		if strings.HasPrefix(job.JCL, "file://") {
+			jclSourceDescription = fmt.Sprintf("user-provided local JCL ('%s', submitted from %s)", job.JCL, jclToSubmitDSN)
+		} else {
+			jclSourceDescription = fmt.Sprintf("Grace-generated JCL (submitted from %s)", jclToSubmitDSN)
+		}
+	}
+
+	logger := log.With().
+		Str("workflow_id", ctx.WorkflowId.String()).
+		Str("job_name", job.Name).
+		Str("jcl_dsn_to_submit", jclToSubmitDSN).
+		Logger()
+
+	logger.Debug().Msgf("Preparing to submit JCL via Zowe, using %s.", jclSourceDescription)
+
+	rawSubmit, err := runZowe(ctx, "zos-jobs", "submit", "data-set", jclToSubmitDSN, "--rfj")
 	if err != nil {
 		// Return rawSubmit even on error, as it might contain partial info
 		var submitResult types.ZoweRfj
-		// Attempt to unmarshal even if runZowe failed, might have partial JSON
 		_ = json.Unmarshal(rawSubmit, &submitResult)
-		// Prepend context to the error from runZowe
+
+		logger.Error().Err(err).Msg("Zowe submit process execution failed.")
+
 		return &submitResult, fmt.Errorf("zowe submit process failed for job %s: %w", job.Name, err)
 	}
 
@@ -34,9 +73,12 @@ func SubmitJob(ctx *context.ExecutionContext, job *types.Job) (*types.ZoweRfj, e
 	unmarshalErr := json.Unmarshal(rawSubmit, &submitResult)
 	if unmarshalErr != nil {
 		errMsg := fmt.Sprintf("failed to parse zowe submit response for job %s: %v, raw: %s", job.Name, unmarshalErr, string(rawSubmit))
+
 		submitResult.Success = false
 		submitResult.Message = errMsg
 		submitResult.Error = &types.ZoweRfjError{Msg: errMsg}
+
+		logger.Error().Str("raw_output", string(rawSubmit)).Err(unmarshalErr).Msg("Failed to parse Zowe submit response.")
 		return &submitResult, fmt.Errorf(errMsg)
 	}
 
@@ -50,10 +92,11 @@ func SubmitJob(ctx *context.ExecutionContext, job *types.Job) (*types.ZoweRfj, e
 		} else {
 			errMsg = fmt.Sprintf("zowe submission failed for job %s with unknown reason", job.Name)
 		}
-		// Return the result structure containing the error details, but also return an error for flow control
+		logger.Warn().Msg(errMsg)
 		return &submitResult, errors.New(errMsg)
 	}
 
+	logger.Debug().Str("returned_jobid", submitResult.Data.JobID).Msg("Zowe submit call successful.")
 	return &submitResult, nil
 }
 

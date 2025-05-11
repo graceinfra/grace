@@ -24,16 +24,16 @@ jobs:
         path: zos-temp://vsamcsv.obj
 
   - name: LINK
-    type: linkedit
     depends_on: [COMPILE]
+    type: linkedit
     program: VSAMCSV
     inputs:
       - name: SYSLIN
         path: zos-temp://vsamcsv.obj
 
   - name: RUN
-    type: execute
     depends_on: [LINK]
+    type: execute
     program: VSAMCSV
     inputs:
       - name: VSAMIN
@@ -43,8 +43,8 @@ jobs:
         path: zos-temp://vsam_extract.csv
 
   - name: LOADCSV
-    type: shell
     depends_on: [RUN]
+    type: shell
     with:
       inline: cp "$GRACE_INPUT_CSVDL" ./final_vsam_extract.csv
     inputs:
