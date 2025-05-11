@@ -1,0 +1,11 @@
+//{{ .JobName | ToUpper }} JOB (ACCT),'CUSTOM JOB',CLASS=A,MSGCLASS=A
+//STEP1    EXEC PGM={{ .ProgramName }}
+//STEPLIB  DD DSN={{ .LoadLib }},DISP=SHR
+{{ range .Inputs }}
+//{{ .Name }} DD DSN={{ .DSN }},DISP={{ .DISP }}
+{{ end }}
+{{ range .Outputs }}
+//{{ .Name }} DD DSN={{ .DSN }},DISP={{ .DISP }},
+//             SPACE={{ .Space }},
+//             DCB={{ .DCB }}
+{{ end }}
