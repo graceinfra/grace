@@ -50,8 +50,6 @@ Use init to start building Grace workflows declaratively, with ready-to-run JCL 
 		targetDir := workflowName
 		jobName := workflowName
 
-		fmt.Println("targetDir: ", targetDir)
-
 		// If current directory (default) selected, set jobName to cwd
 		if jobName == "." {
 			cwd, _ := os.Getwd()
