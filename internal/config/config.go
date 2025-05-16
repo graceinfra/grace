@@ -362,6 +362,10 @@ func validateSyntax(cfg *types.GraceConfig, registry *jobhandler.HandlerRegistry
 					errs = append(errs, fmt.Sprintf("%s: unsupported scheme in path %q", inputCtx, inputSpec.Path))
 				}
 			}
+
+			if inputSpec.Encoding != "" && inputSpec.Encoding != "binary" && inputSpec.Encoding != "text" {
+				errs = append(errs, fmt.Sprintf("%s: invalid 'encoding' value %q; allowed values are 'binary', 'text', or omitted (defaults to binary)", inputCtx, inputSpec.Encoding))
+			}
 		}
 
 		// Validate job outputs

@@ -54,6 +54,7 @@ type FileSpec struct {
 	DsType string `yaml:"ds_type,omitempty"`
 	Disp string `yaml:"disp,omitempty"`
 	Keep   bool   `yaml:"keep,omitempty"`
+	Encoding string `yaml:"encoding,omitempty"`
 }
 
 type JobResult interface {

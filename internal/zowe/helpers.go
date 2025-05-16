@@ -125,16 +125,24 @@ func UploadFileToDataset(ctx *context.ExecutionContext, path, member string) (*u
 // DownloadFile downloads a z/OS dataset or member to a local file path using Zowe CLI.
 // targetLocalPath is the full path where the file should be saved locally.
 // datasetName is the fully qualified z/OS dataset name, can include a member like DSN(MEMBER).
-func DownloadFile(ctx *context.ExecutionContext, targetLocalPath, datasetName string) error {
+// encodingHint can be "text" or "binary" (or empty for default to binary).
+func DownloadFile(ctx *context.ExecutionContext, targetLocalPath, datasetName, encodingHint string) error {
 	zoweLogger := log.With().
 		Str("component", "zowe_cli").
 		Str("workflow_id", ctx.WorkflowId.String()).
 		Str("dsn", datasetName).
 		Str("local_path", targetLocalPath).
+		Str("encoding_hint", encodingHint).
 		Logger()
 
-	// Using --binary to ensure correct transfer for load modules or binary files
-	args := []string{"zos-files", "download", "data-set", datasetName, "--file", targetLocalPath, "--binary", "--rfj"}
+	args := []string{"zos-files", "download", "data-set", datasetName, "--file", targetLocalPath, "--rfj"}
+
+	if encodingHint == "text" {
+		zoweLogger.Debug().Msg("Downloading as text (implicit Zowe conversion to local encoding format).")
+	} else {
+		zoweLogger.Debug().Msg("Downloading as binary (--binary flag).")
+		args = append(args, "--binary")
+	}
 
 	zoweLogger.Debug().Msg("Attempting to download dataset.")
 	out, err := runZowe(ctx, args...)

@@ -125,6 +125,7 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 	for _, inputSpec := range job.Inputs {
 		virtualPath := inputSpec.Path
 		ddName := strings.ToUpper(inputSpec.Name)
+		encoding := inputSpec.Encoding
 
 		physicalPath, err := paths.ResolvePath(ctx, job, inputSpec.Path)
 		if err != nil {
@@ -152,7 +153,7 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 			localStagePathForEnv = filepath.Join(ctx.LocalStageDir, derivedLocalName) // Actual download target
 
 			logger.Info().Str("dsn", physicalPath).Str("local_path", localStagePathForEnv).Msgf("Downloading input %s for shell job", ddName)
-			if dlErr := zowe.DownloadFile(ctx, localStagePathForEnv, physicalPath); dlErr != nil {
+			if dlErr := zowe.DownloadFile(ctx, localStagePathForEnv, physicalPath, encoding); dlErr != nil {
 				logger.Error().Err(dlErr).Msg("Failed to download input")
 				record.FinishTime = time.Now().Format(time.RFC3339)
 				record.DurationMs = time.Since(startTime).Milliseconds()
@@ -166,7 +167,7 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 			localStagePathForEnv = filepath.Join(ctx.LocalStageDir, derivedLocalName) // Actual download target
 
 			logger.Info().Str("dsn", physicalPath).Str("local_path", localStagePathForEnv).Msgf("Downloading input %s for shell job", ddName)
-			if dlErr := zowe.DownloadFile(ctx, localStagePathForEnv, physicalPath); dlErr != nil {
+			if dlErr := zowe.DownloadFile(ctx, localStagePathForEnv, physicalPath, encoding); dlErr != nil {
 				logger.Error().Err(dlErr).Msg("Failed to download input")
 				record.FinishTime = time.Now().Format(time.RFC3339)
 				record.DurationMs = time.Since(startTime).Milliseconds()
@@ -283,7 +284,8 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 			actualLocalScriptPath := filepath.Join(ctx.LocalStageDir, localScriptFileName)
 			logger.Info().Str("dsn_member", scriptPath).Str("local_path", actualLocalScriptPath).Msg("Downloading script from src:// for shell job")
 
-			err := zowe.DownloadFile(ctx, actualLocalScriptPath, scriptPath)
+			// Scripts are almost always text, so we can default to text download encoding
+			err := zowe.DownloadFile(ctx, actualLocalScriptPath, scriptPath, "text")
 			if err != nil {
 				logger.Error().Err(err).Str("remote_script_path", scriptPath).Msg("Failed to download script")
 				record.FinishTime = time.Now().Format(time.RFC3339)
