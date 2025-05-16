@@ -16,48 +16,67 @@ import (
 )
 
 var submitOnly []string
+var isVerbose bool
 
 func init() {
 	rootCmd.AddCommand(runCmd)
 
 	runCmd.Flags().StringSliceVar(&submitOnly, "only", nil, "Submit only specified job(s)")
+	runCmd.Flags().BoolVarP(&isVerbose, "verbose", "v", false, "Enable verbose logging")
 }
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Execute and monitor mainframe jobs defined in grace.yml",
-	Long: `Run orchestrates the execution of mainframe jobs defined in grace.yml, submitting them in sequence and monitoring their execution until completion.
+	Short: "Run a workflow and wait for completion",
+	Long: `Run executes a workflow defined in grace.yml synchronously.
 
-It works with resources already available on the mainframe (previously uploaded via [grace deck]) and provides real-time status updates as jobs progress. Each job execution is tracked, with results and logs collected for review.
+Grace will execute the full workflow orchestration, including dependencies
+and concurrency, and wait for completion. Progress will be shown in the
+terminal and logs will be written to '.grace/logs/'.
 
-Run creates a timestamped log directory containing job output and a summary.json file with execution details.
+Use 'grace submit' instead for asynchronous execution that returns immediately.
 
-Use '--only' to selectively run specific jobs.`,
+Assumes 'grace deck' has been run previously to prepare JCL and source files.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// --- Load and validate grace.yml ---
 
 		registry := GetDependencies().HandlerRegistry
 
-		graceCfg, configDir, err := config.LoadGraceConfig("grace.yml")
+		// TODO: could implement this as a flag
+		configPath := "grace.yml"
+		graceCfg, configDir, err := config.LoadGraceConfig(configPath)
 		if err != nil {
-			cobra.CheckErr(fmt.Errorf("failed to load grace configuration: %w", err))
+			cobra.CheckErr(fmt.Errorf("failed to load %q: %w", configPath, err))
 		}
 
-		// --- Perform full validation using the registry ---
-
-		if err := config.ValidateGraceConfig(graceCfg, registry); err != nil {
-			cobra.CheckErr(fmt.Errorf("grace configuration validation failed: %w", err))
+		err = config.ValidateGraceConfig(graceCfg, registry)
+		if err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to validate %q: %w", configPath, err))
 		}
 
-		// --- Create log directory ---
+		log.Info().Msgf("✓ Configuration %q loaded and validated.", configPath)
 
-		workflowStartTime := time.Now()
+		// --- Initialize workflow context and logging ---
 		workflowId := uuid.New()
+		workflowStartTime := time.Now()
 
 		logDir, err := logging.CreateLogDir(workflowId, workflowStartTime, "run")
-		cobra.CheckErr(err)
+		if err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to create log directory for workflow %s: %w", workflowId.String(), err))
+		}
 
-		// --- Prepare ExecutionContext ---
+		// Configure file logging
+		logFilePath := filepath.Join(logDir, "workflow.log")
+		err = logging.ConfigureGlobalLogger(isVerbose, logFilePath)
+		if err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to initialize logging: %w", err))
+		}
+
+		// Initialize contextual logger
+		logCtx := log.With().Str("workflow_id", workflowId.String()).Logger()
+		logCtx.Info().Msgf("Logs will be stored in: %s", logDir)
+
+		// --- Set up execution context ---
 
 		localStageDir := filepath.Join(logDir, ".local-staging")
 		ctx := &context.ExecutionContext{
@@ -73,24 +92,25 @@ Use '--only' to selectively run specific jobs.`,
 		// --- Instantiate and run orchestrator ---
 
 		orch := orchestrator.NewZoweOrchestrator()
-		log.Info().Str("workflow_id", workflowId.String()).Msg("Starting workflow run...")
+		logCtx.Info().Msg("Starting workflow run...")
 
 		jobExecutionRecords, err := orch.Run(ctx, registry)
-		cobra.CheckErr(err)
+		if err != nil {
+			logCtx.Error().Err(err).Msg("Orchestration failed")
+			cobra.CheckErr(err)
+		}
 
-		// --- Construct workflow summary ---
+		// --- Construct and write workflow summary ---
 
-		log.Debug().Str("workflow_id", workflowId.String()).Msg("Generating execution summary...")
+		logCtx.Debug().Msg("Generating execution summary...")
 
 		summary := generateExecutionSummary(jobExecutionRecords, workflowId, workflowStartTime, graceCfg, "run", submitOnly)
 
-		// --- Write workflow summary to summary.json ---
-
 		if err = writeSummary(summary, logDir); err != nil {
-			log.Error().Str("workflow_id", workflowId.String()).Msgf("Failed to write summary.json to %s", logDir)
+			logCtx.Error().Err(err).Msg("Failed to write summary.json")
 		}
 
-		fmt.Println() // Newline
-		log.Info().Str("workflow_id", workflowId.String()).Msgf("✓ Workflow complete, logs saved to: %s", logDir)
+		fmt.Println() // Visual spacing
+		logCtx.Info().Msgf("✓ Workflow complete, logs saved to: %s", logDir)
 	},
 }
