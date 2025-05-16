@@ -14,25 +14,25 @@ datasets:
   loadlib: IBMUSER.LOAD
 
 jobs:
-  - name: COMPILE
-    type: compile
-    inputs:
-      - name: SYSIN
-        path: src://vsamcsv.cbl
-    outputs:
-      - name: SYSLIN
-        path: zos-temp://vsamcsv.obj
-
-  - name: LINK
-    depends_on: [COMPILE]
-    type: linkedit
-    program: VSAMCSV
-    inputs:
-      - name: SYSLIN
-        path: zos-temp://vsamcsv.obj
+  # - name: COMPILE
+  #   type: compile
+  #   inputs:
+  #     - name: SYSIN
+  #       path: src://vsamcsv.cbl
+  #   outputs:
+  #     - name: SYSLIN
+  #       path: zos-temp://vsamcsv.obj
+  #
+  # - name: LINK
+  #   depends_on: [COMPILE]
+  #   type: linkedit
+  #   program: VSAMCSV
+  #   inputs:
+  #     - name: SYSLIN
+  #       path: zos-temp://vsamcsv.obj
 
   - name: RUN
-    depends_on: [LINK]
+    # depends_on: [LINK]
     type: execute
     program: VSAMCSV
     inputs:
@@ -46,10 +46,11 @@ jobs:
     depends_on: [RUN]
     type: shell
     with:
-      inline: cp "$GRACE_INPUT_CSVDL" ./final_vsam_extract.csv
+      inline: cp "$GRACE_INPUT_CSVDL" "$GRACE_OUTPUT_LOCALCPY"
     inputs:
       - name: CSVDL
         path: zos-temp://vsam_extract.csv
+        encoding: text
     outputs:
       - name: LOCALCPY
         path: file://final_vsam_extract.csv
