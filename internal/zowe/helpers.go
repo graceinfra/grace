@@ -27,13 +27,20 @@ import (
 //
 // Stderr from the Zowe command is logged verbosely if not empty, but not
 // typically included in the returned error unless the process execution fails.
+//
+// We append `--profile [grace.yml config.profile]` here to use the Zowe profile
+// defined by the user in grace.yml.
 func runZowe(ctx *context.ExecutionContext, args ...string) ([]byte, error) {
 	zoweLogger := log.With().
 		Str("component", "zowe_cli").
 		Str("workflow_id", ctx.WorkflowId.String()).
 		Logger()
 
-	zoweLogger.Debug().Strs("args", args).Msg("Running zowe command")
+	profile := ctx.Config.Config.Profile
+
+	zoweLogger.Debug().Str("profile", profile).Strs("args", args).Msg("Running zowe command")
+
+	args = append(args, "--zosmf-profile", profile)
 
 	cmd := exec.Command("zowe", args...)
 
@@ -168,7 +175,7 @@ func DownloadFile(ctx *context.ExecutionContext, targetLocalPath, datasetName, e
 			errMsg = fmt.Sprintf("%s: %s", errMsg, dlRes.Message)
 		}
 		zoweLogger.Error().Str("zowe_error_msg", dlRes.GetError()).Str("zowe_stdout", dlRes.Stdout).Str("zowe_stderr", dlRes.Stderr).Msg(errMsg)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%v", errMsg)
 	}
 
 	zoweLogger.Info().Msg("Dataset/member downloaded successfully.")

@@ -46,11 +46,13 @@ jobs:
     depends_on: [RUN]
     type: shell
     with:
-      inline: cp "$GRACE_INPUT_CSVDL" "$GRACE_OUTPUT_LOCALCPY"
+      inline: |
+        echo "Writing to '$GRACE_OUTPUT_LOCALCPY'"
+        cp "$GRACE_INPUT_CSVDL" "$GRACE_OUTPUT_LOCALCPY"
     inputs:
       - name: CSVDL
         path: zos-temp://vsam_extract.csv
         encoding: text
     outputs:
       - name: LOCALCPY
-        path: file://final_vsam_extract.csv
+        path: file://vsam_extract.csv

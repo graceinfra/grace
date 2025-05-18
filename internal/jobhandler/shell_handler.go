@@ -262,8 +262,16 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 			record.SubmitResponse = &types.ZoweRfj{Success: false, Error: &types.ZoweRfjError{Msg: "Failed to write to temp script file"}}
 			return record
 		}
-		tmpFile.Close()
-		os.Chmod(scriptPath, 0755)
+		err = tmpFile.Close()
+		if err != nil {
+			logger.Error().Err(err).Msg("Error closing shell script temp file.")
+			return nil
+		}
+		err = os.Chmod(scriptPath, 0755)
+		if err != nil {
+			logger.Error().Err(err).Msg("Error setting permissions on shell script temp file.")
+			return nil
+		}
 		cleanupTempFiles = append(cleanupTempFiles, scriptPath)
 		shellCmd = exec.Command(shellToUse, scriptPath)
 	} else {
@@ -309,7 +317,24 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 
 	err := shellCmd.Run()
 
+	// Add formatted logging of stdout/stderr to terminal
+	if stdout.Len() > 0 {
+		logger.Info().Msg("Shell job stdout:")
+		for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+			logger.Info().Msg("  " + line)
+		}
+	}
+	if stderr.Len() > 0 {
+		logger.Info().Msg("Shell job stderr:")
+		for _, line := range strings.Split(strings.TrimSpace(stderr.String()), "\n") {
+			logger.Info().Msg("  " + line)
+		}
+	}
+
 	record.SubmitResponse = &types.ZoweRfj{
+		Success: true,
+		Stdout:  stdout.String(),
+		Stderr:  stderr.String(),
 		Data: &types.ZoweRfjData{
 			JobName: job.Name,
 			JobID:   shellJobId,
