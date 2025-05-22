@@ -22,7 +22,7 @@ func initialInitModel(workflowArg string) initModel {
 	workflow := textinput.New()
 	workflow.Placeholder = defaultWorkflow
 	workflow.CharLimit = 64
-	workflow.Width = 20
+	workflow.Width = 64
 
 	if workflowArg != "" {
 		workflow.SetValue(workflowArg)
