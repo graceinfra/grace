@@ -1,0 +1,132 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. MYPROG.
+      *----------------------------------------------------------------*
+       ENVIRONMENT DIVISION.
+       INPUT-OUTPUT SECTION.
+       FILE-CONTROL.
+           SELECT PARAM-FILE      ASSIGN TO PARAMDAT.
+           SELECT EXTRA-FILE      ASSIGN TO EXTRAPRM.
+           SELECT INPUT-FILE      ASSIGN TO SYSUT1.
+           SELECT OUTPUT-FILE     ASSIGN TO SYSUT2.
+           SELECT REPORT-FILE     ASSIGN TO REPORTDD.
+           SELECT PARAM-CARD-FILE ASSIGN TO PARAMCRD.
+      *----------------------------------------------------------------*
+       DATA DIVISION.
+       FILE SECTION.
+       FD  PARAM-FILE RECORD CONTAINS 80 CHARACTERS.
+       01  PARAM-REC         PIC X(80).
+       FD  EXTRA-FILE RECORD CONTAINS 80 CHARACTERS.
+       01  EXTRA-REC         PIC X(80).
+       FD  INPUT-FILE RECORD CONTAINS 80 CHARACTERS.
+       01  INPUT-REC         PIC X(80).
+       FD  OUTPUT-FILE RECORD CONTAINS 80 CHARACTERS.
+       01  OUTPUT-REC        PIC X(80).
+       FD  REPORT-FILE RECORD CONTAINS 133 CHARACTERS.
+       01  REPORT-REC        PIC X(133).
+       FD  PARAM-CARD-FILE RECORD CONTAINS 80 CHARACTERS.
+       01  PARAM-CARD-REC    PIC X(80).
+      *----------------------------------------------------------------*
+       WORKING-STORAGE SECTION.
+       01  WS-REPORT-LINE    PIC X(133).
+       01  WS-PARAM-DATA     PIC X(80).
+       01  WS-EXTRA-PARAM    PIC X(80).
+       01  WS-RUNTIME-INPUT  PIC X(80).
+       01  WS-PARAM-CARD-IN  PIC X(80).
+       01  WS-EOF-FLAGS.
+           05 WS-EOF-PARAM      PIC X VALUE 'N'.
+              88 EOF-PARAM-REACHED     VALUE 'Y'.
+           05 WS-EOF-EXTRA      PIC X VALUE 'N'.
+              88 EOF-EXTRA-REACHED     VALUE 'Y'.
+           05 WS-EOF-INPUT      PIC X VALUE 'N'.
+              88 EOF-INPUT-REACHED     VALUE 'Y'.
+           05 WS-EOF-PARAMCARD  PIC X VALUE 'N'.
+              88 EOF-PARAMCARD-REACHED VALUE 'Y'.
+      *----------------------------------------------------------------*
+       PROCEDURE DIVISION.
+       MAIN-LOGIC.
+           OPEN INPUT PARAM-FILE, EXTRA-FILE, INPUT-FILE,
+                      PARAM-CARD-FILE.
+           OPEN OUTPUT OUTPUT-FILE, REPORT-FILE.
+
+           DISPLAY "MYPROG: Reading PARAMDAT".
+           READ PARAM-FILE INTO WS-PARAM-DATA
+               AT END SET EOF-PARAM-REACHED TO TRUE
+           END-READ.
+           IF NOT EOF-PARAM-REACHED
+               DISPLAY "PARAMDAT: " WS-PARAM-DATA
+               MOVE "PARAMDAT Read: " TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+               MOVE WS-PARAM-DATA TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+           ELSE
+               DISPLAY "PARAMDAT: EMPTY OR EOF"
+               MOVE "PARAMDAT: EMPTY OR EOF" TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+           END-IF.
+
+           DISPLAY "MYPROG: Reading EXTRAPRM".
+           READ EXTRA-FILE INTO WS-EXTRA-PARAM
+               AT END SET EOF-EXTRA-REACHED TO TRUE
+           END-READ.
+           IF NOT EOF-EXTRA-REACHED
+               DISPLAY "EXTRAPRM: " WS-EXTRA-PARAM
+               MOVE "EXTRAPRM Read: " TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+               MOVE WS-EXTRA-PARAM TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+           ELSE
+               DISPLAY "EXTRAPRM: EMPTY OR EOF"
+               MOVE "EXTRAPRM: EMPTY OR EOF" TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+           END-IF.
+
+           DISPLAY "MYPROG: Reading PARAMCRD (from RUNMYPG input)".
+           READ PARAM-CARD-FILE INTO WS-PARAM-CARD-IN
+               AT END SET EOF-PARAMCARD-REACHED TO TRUE
+           END-READ.
+           IF NOT EOF-PARAMCARD-REACHED
+               DISPLAY "PARAMCRD: " WS-PARAM-CARD-IN
+               MOVE "PARAMCRD Read (RUNMYPG): " TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+               MOVE WS-PARAM-CARD-IN TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+           ELSE
+               DISPLAY "PARAMCRD: EMPTY OR EOF (RUNMYPG)"
+               MOVE "PARAMCRD: EMPTY OR EOF (RUNMYPG)" TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+           END-IF.
+
+           DISPLAY "MYPROG: Reading SYSUT1".
+           READ INPUT-FILE INTO WS-RUNTIME-INPUT
+               AT END SET EOF-INPUT-REACHED TO TRUE
+           END-READ.
+           IF NOT EOF-INPUT-REACHED
+               DISPLAY "SYSUT1: " WS-RUNTIME-INPUT
+               STRING "PROCESSED: " WS-RUNTIME-INPUT
+                   DELIMITED BY SIZE
+                   INTO OUTPUT-REC
+               END-STRING
+               WRITE OUTPUT-REC
+               MOVE "SYSUT1 Read: " TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+               MOVE WS-RUNTIME-INPUT TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+               MOVE "SYSUT2 Written: " TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+               MOVE OUTPUT-REC TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+           ELSE
+               DISPLAY "SYSUT1: EMPTY OR EOF"
+               MOVE "SYSUT1: EMPTY OR EOF" TO WS-REPORT-LINE
+               WRITE REPORT-REC FROM WS-REPORT-LINE
+               MOVE "PROCESSED: NO INPUT DATA" TO OUTPUT-REC
+               WRITE OUTPUT-REC
+           END-IF.
+
+           DISPLAY "MYPROG: Execution complete.".
+           MOVE "MYPROG: Execution complete." TO WS-REPORT-LINE.
+           WRITE REPORT-REC FROM WS-REPORT-LINE.
+
+           CLOSE PARAM-FILE, EXTRA-FILE, INPUT-FILE, OUTPUT-FILE,
+                 REPORT-FILE, PARAM-CARD-FILE.
+           STOP RUN.

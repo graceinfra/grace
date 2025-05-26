@@ -51,6 +51,10 @@ func (h *ZosLinkeditHandler) Validate(job *types.Job, cfg *types.GraceConfig) []
 func (h *ZosLinkeditHandler) Prepare(ctx *context.ExecutionContext, job *types.Job, logger zerolog.Logger) error {
 	logger.Debug().Msg("Prepare step for ZosLinkeditHandler")
 
+	if err := prepareZosJobInputs(ctx, job, logger); err != nil {
+		return fmt.Errorf("failed to prepare inputs for linkedit job %s: %w", job.Name, err)
+	}
+
 	// For linkedit, the primary output is the member in the load library.
 	// We don't typically pre-delete the load library member itself, as linkedit replaces it.
 	// However, if there were other temp:// outputs defined for a linkedit job (e.g., SYSPRINT to a temp dataset),
@@ -58,7 +62,7 @@ func (h *ZosLinkeditHandler) Prepare(ctx *context.ExecutionContext, job *types.J
 
 	for _, outputSpec := range job.Outputs {
 		if strings.HasPrefix(outputSpec.Path, "zos-temp://") && !outputSpec.Keep {
-			physicalDSN, err := paths.ResolvePath(ctx, job, outputSpec.Path)
+			physicalDSN, err := paths.ResolvePath(ctx, job, outputSpec.Path, nil)
 			if err != nil {
 				logger.Error().Err(err).Str("virtual_path", outputSpec.Path).Msg("Failed to resolve temporary output path for pre-deletion.")
 				return fmt.Errorf("failed to resolve temporary output path %s for pre-deletion: %w", outputSpec.Path, err)
@@ -158,6 +162,9 @@ func (h *ZosLinkeditHandler) Execute(ctx *context.ExecutionContext, job *types.J
 }
 
 func (h *ZosLinkeditHandler) Cleanup(ctx *context.ExecutionContext, job *types.Job, execRecord *models.JobExecutionRecord, logger zerolog.Logger) error {
-	logger.Debug().Msg("Cleanup step for ZosLinkeditHandler (no-op)")
+	logger.Debug().Msg("Cleanup step for ZosLinkeditHandler")
+	if err := cleanupZosJobOutputs(ctx, job, execRecord, logger); err != nil {
+		logger.Error().Err(err).Msg("Error during ZosLinkeditHandler output cleanup.")
+	}
 	return nil
 }

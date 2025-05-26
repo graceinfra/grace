@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"fmt"
+	"github.com/graceinfra/grace/types"
 	"maps"
 	"os"
 	"path/filepath"
@@ -54,7 +55,11 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 	// --- Preresolve paths needed for JCL generation ---
 
 	log.Debug().Str("workflow_id", ctx.WorkflowId.String()).Msg("Preresolving output paths for decking...")
-	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(graceCfg)
+	jobMap := make(map[string]*types.Job)
+	for _, job := range graceCfg.Jobs {
+		jobMap[job.Name] = job
+	}
+	resolvedPathMap, resolveErr := paths.PreresolveOutputAndLocalTempDataSources(graceCfg)
 	if resolveErr != nil {
 		return fmt.Errorf("decking failed: could not resolve output paths: %w", resolveErr)
 	}
@@ -65,6 +70,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 		ctx.ResolvedPaths = make(map[string]string)
 	}
 	maps.Copy(ctx.ResolvedPaths, resolvedPathMap)
+
 	ctx.PathMutex.Unlock()
 
 	for _, job := range graceCfg.Jobs {
@@ -196,7 +202,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 		// --- Upload JCL ---
 
 		jobNameUpper := strings.ToUpper(job.Name) // Already have this, but ensure it's available here
-		if !skipJCLProcessingAndUpload { // Only if not using zos:// JCL
+		if !skipJCLProcessingAndUpload {          // Only if not using zos:// JCL
 			if !noUpload { // Only if uploads are generally enabled
 				if renderedJCLContent != "" || (noCompile && (job.JCL == "" || strings.HasPrefix(job.JCL, "file://"))) {
 					// Condition to attempt upload:
@@ -211,8 +217,8 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 						// If noCompile was true for file:// JCL, and we couldn't read it earlier, we would have errored out.
 						// If renderedJCLContent is empty AND noCompile is true, it means we skipped generation.
 						if noCompile && renderedJCLContent == "" {
-                             logCtx.Info().Str("jcl_local_path", jclLocalOutPath).Msg("JCL generation skipped (--no-compile) and no existing local JCL file to upload.")
-                        } else if renderedJCLContent != "" {
+							logCtx.Info().Str("jcl_local_path", jclLocalOutPath).Msg("JCL generation skipped (--no-compile) and no existing local JCL file to upload.")
+						} else if renderedJCLContent != "" {
 							return fmt.Errorf("job %s: internal error, JCL file %s expected but not found for upload after processing", job.Name, jclLocalOutPath)
 						}
 					} else { // File exists, proceed with upload
@@ -226,17 +232,17 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 						targetJCLMember := fmt.Sprintf("%s(%s)", targetJCLPDS, jobNameUpper)
 
 						logCtx.Info().Str("local_jcl_path", jclLocalOutPath).Str("target_member", targetJCLMember).Msg("Uploading JCL deck...")
-						_, uploadErr := zowe.UploadFileToDataset(ctx, jclLocalOutPath, targetJCLMember)
+						_, uploadErr := zowe.UploadFileToDataset(ctx, jclLocalOutPath, targetJCLMember, "text")
 						if uploadErr != nil {
 							return fmt.Errorf("job %s: failed to upload JCL %s to %s: %w", job.Name, jclLocalOutPath, targetJCLMember, uploadErr)
 						}
 						logCtx.Info().Str("target", targetJCLMember).Msg("✓ JCL deck uploaded.")
 					}
 				} else {
-                     // This case means renderedJCLContent is "" and it's not a --no-compile scenario for default/file JCL
-                     // or it's --no-compile and renderedJCLContent is still empty (e.g. default jcl with --no-compile and no pre-existing file)
-                     logCtx.Info().Msg("No JCL content available or generated; JCL upload skipped.")
-                }
+					// This case means renderedJCLContent is "" and it's not a --no-compile scenario for default/file JCL
+					// or it's --no-compile and renderedJCLContent is still empty (e.g. default jcl with --no-compile and no pre-existing file)
+					logCtx.Info().Msg("No JCL content available or generated; JCL upload skipped.")
+				}
 			} else { // noUpload is true
 				logCtx.Info().Msg("JCL Upload globally skipped (--no-upload).")
 			}
@@ -256,7 +262,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 					if strings.HasPrefix(inputSpec.Path, "src://") {
 						resource := strings.TrimPrefix(inputSpec.Path, "src://")
 						localPath := filepath.Join(ctx.ConfigDir, "src", resource) // src relative to grace.yml
-						
+
 						if _, statErr := os.Stat(localPath); statErr != nil {
 							return fmt.Errorf("job %s: source file %s (for input %s, DD %s) not found at %s: %w", job.Name, resource, inputSpec.Path, inputSpec.Name, localPath, statErr)
 						}
@@ -268,7 +274,7 @@ func (o *zoweOrchestrator) DeckAndUpload(ctx *context.ExecutionContext, registry
 
 						targetSrcMember := fmt.Sprintf("%s(%s)", effectiveSrcPDS, memberName)
 						logCtx.Info().Str("local_path", localPath).Str("target", targetSrcMember).Msgf("Uploading source file for DD %s...", inputSpec.Name)
-						_, uploadErr := zowe.UploadFileToDataset(ctx, localPath, targetSrcMember)
+						_, uploadErr := zowe.UploadFileToDataset(ctx, localPath, targetSrcMember, "text")
 						if uploadErr != nil {
 							return fmt.Errorf("job %s: failed to upload source %s to %s: %w", job.Name, localPath, targetSrcMember, uploadErr)
 						}
@@ -321,7 +327,11 @@ func (o *zoweOrchestrator) Run(ctx *context.ExecutionContext, registry *jobhandl
 	// --- Preresolve output paths ---
 
 	log.Debug().Msg("Preresolving output paths for run...")
-	resolvedPathMap, resolveErr := paths.PreresolveOutputPaths(ctx.Config)
+	jobMap := make(map[string]*types.Job)
+	for _, job := range ctx.Config.Jobs {
+		jobMap[job.Name] = job
+	}
+	resolvedPathMap, resolveErr := paths.PreresolveOutputAndLocalTempDataSources(ctx.Config)
 	if resolveErr != nil {
 		return nil, fmt.Errorf("orchestration failed: could not resolve output paths: %v", resolveErr)
 	}
@@ -459,17 +469,24 @@ func (o *zoweOrchestrator) cleanupTemporaryDatasets(ctx *context.ExecutionContex
 				Bool("output_keep", outputSpec.Keep).
 				Msg("Scanning output for cleanup eligibility")
 
-			isZosTemp := strings.HasPrefix(outputSpec.Path, "zos-temp://")
-			isLocalTemp := strings.HasPrefix(outputSpec.Path, "local-temp://")
+			isZosJobType := job.Type == "compile" || job.Type == "linkedit" || job.Type == "execute"
 
-			if (isZosTemp || isLocalTemp) && !outputSpec.Keep {
+			createdTempZosDataset := strings.HasPrefix(outputSpec.Path, "zos-temp://") ||
+				(isZosJobType && (strings.HasPrefix(outputSpec.Path, "file://") ||
+					strings.HasPrefix(outputSpec.Path, "local-temp://")))
+
+			if createdTempZosDataset && !outputSpec.Keep {
 				resolvedIdentifier, exists := ctx.ResolvedPaths[outputSpec.Path]
 				if !exists {
 					logger.Warn().Str("job", job.Name).Str("virtual_path", outputSpec.Path).Msg("Temporary output path not found in resolved paths, cannot clean up.")
 					continue
 				}
 
-				if isZosTemp {
+				// For zos-temp://, file://, local-temp:// (from a z/OS job), resolvedIdentifier is the temp z/OS DSN
+				isGraceTempDSN := strings.HasPrefix(resolvedIdentifier, ctx.Config.Datasets.JCL[:strings.Index(ctx.Config.Datasets.JCL, ".")]) &&
+					strings.Contains(resolvedIdentifier, ".GRC.H")
+
+				if isGraceTempDSN {
 					dsnToDelete := resolvedIdentifier
 					logger.Info().Str("dsn", dsnToDelete).Msgf("Attempting to clean zos-temporary dataset for output '%s' ('%s') of job '%s'", outputSpec.Name, outputSpec.Path, job.Name)
 					if err := zowe.DeleteDatasetIfExists(ctx, dsnToDelete); err != nil {
@@ -479,7 +496,8 @@ func (o *zoweOrchestrator) cleanupTemporaryDatasets(ctx *context.ExecutionContex
 						logger.Info().Str("dsn", dsnToDelete).Msg("Successfully cleaned zos-temporary dataset.")
 						cleanedCount++
 					}
-				} else {
+				} else if strings.HasPrefix(outputSpec.Path, "local-temp://") && !isZosJobType {
+					// This handles local-temp:// outputs from shell jobs (local file cleanup)
 					// resolvedIdentifier for local-temp is the filename part
 					localPathToDelete := filepath.Join(ctx.LocalStageDir, resolvedIdentifier)
 					logger.Info().Str("local_path", localPathToDelete).Msgf("Attempting to clean local-temporary file for output '%s' ('%s') of job '%s'", outputSpec.Name, outputSpec.Path, job.Name)
@@ -496,11 +514,11 @@ func (o *zoweOrchestrator) cleanupTemporaryDatasets(ctx *context.ExecutionContex
 						cleanedCount++
 					}
 				}
-			} else if (isZosTemp || isLocalTemp) && outputSpec.Keep {
+			} else if createdTempZosDataset && outputSpec.Keep {
 				resolvedIdentifierToKeep, exists := ctx.ResolvedPaths[outputSpec.Path]
 				if exists {
 					pathType := "dataset"
-					if isLocalTemp {
+					if strings.HasPrefix(outputSpec.Path, "local-temp://") && !isZosJobType {
 						pathType = "file"
 						resolvedIdentifierToKeep = filepath.Join(ctx.LocalStageDir, resolvedIdentifierToKeep)
 					}

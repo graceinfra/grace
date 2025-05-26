@@ -19,7 +19,7 @@ const (
 
 // GenerateDDStatements creates the JCL DD statement lines for a job's inputs and outputs
 func GenerateDDStatements(job *types.Job, ctx *context.ExecutionContext) (string, error) {
-	ddLines := []string{}
+	var ddLines []string
 	logCtx := log.With().Str("job", job.Name).Str("workflow_id", ctx.WorkflowId.String()).Logger()
 
 	logCtx.Debug().Msg("Generating DD statements...")
@@ -29,7 +29,12 @@ func GenerateDDStatements(job *types.Job, ctx *context.ExecutionContext) (string
 	for _, inputSpec := range job.Inputs {
 		logCtx.Debug().Str("dd_name", inputSpec.Name).Str("virtual_path", inputSpec.Path).Msg("Processing input")
 
-		dsn, err := paths.ResolvePath(ctx, job, inputSpec.Path)
+		var fileSpecForZosInput *types.FileSpec = nil
+		isZosJobTypeForInput := job.Type == "compile" || job.Type == "linkedit" || job.Type == "execute"
+		if isZosJobTypeForInput && (strings.HasPrefix(inputSpec.Path, "file://") || strings.HasPrefix(inputSpec.Path, "local-temp://")) {
+			fileSpecForZosInput = &inputSpec
+		}
+		dsn, err := paths.ResolvePath(ctx, job, inputSpec.Path, fileSpecForZosInput)
 		if err != nil {
 			logCtx.Error().Err(err).Str("virtual_path", inputSpec.Path).Msg("Failed to resolve input path")
 			return "", fmt.Errorf("job %q input %q (%s): %w", job.Name, inputSpec.Name, inputSpec.Path, err)
@@ -37,7 +42,19 @@ func GenerateDDStatements(job *types.Job, ctx *context.ExecutionContext) (string
 
 		ddName := strings.ToUpper(inputSpec.Name) // Ensure uppercase DDName
 		disp := DefaultInputDISP
-		// TODO: Allow overriding DISP for inputs via types.FileSpec field
+
+		// If this input was originally a file:// or local-temp:// for a z/OS job,
+		// it has been uploaded to a temporary DSN. Its DISP should be (OLD,DELETE) or (OLD,KEEP)
+		isUploadedTempInput := (strings.HasPrefix(inputSpec.Path, "file://") || strings.HasPrefix(inputSpec.Path, "local-temp://")) &&
+			(job.Type == "compile" || job.Type == "linkedit" || job.Type == "execute")
+
+		if isUploadedTempInput {
+			if inputSpec.Keep {
+				disp = "(OLD,KEEP)"
+			} else {
+				disp = "(OLD,DELETE)"
+			}
+		}
 
 		ddLine := fmt.Sprintf("//%-8s DD DSN=%s,DISP=%s", ddName, dsn, disp)
 		ddLines = append(ddLines, ddLine)
@@ -48,7 +65,8 @@ func GenerateDDStatements(job *types.Job, ctx *context.ExecutionContext) (string
 
 	for _, outputSpec := range job.Outputs {
 		logCtx.Debug().Str("dd_name", outputSpec.Name).Str("virtual_path", outputSpec.Path).Msg("Processing output")
-		dsn, err := paths.ResolvePath(ctx, job, outputSpec.Path)
+
+		dsn, err := paths.ResolvePath(ctx, job, outputSpec.Path, nil)
 		if err != nil {
 			// This shouldn't happen if PreresolveOutputPaths worked, indicates internal error
 			logCtx.Error().Err(err).Str("virtual_path", outputSpec.Path).Msg("Failed to resolve output path")

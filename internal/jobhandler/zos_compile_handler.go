@@ -43,9 +43,14 @@ func (h *ZosCompileHandler) Validate(job *types.Job, cfg *types.GraceConfig) []s
 
 func (h *ZosCompileHandler) Prepare(ctx *context.ExecutionContext, job *types.Job, logger zerolog.Logger) error {
 	logger.Debug().Msg("Prepare step for ZosCompileHandler")
+
+	if err := prepareZosJobInputs(ctx, job, logger); err != nil {
+		return fmt.Errorf("failed to prepare inputs for compile job %s: %w", job.Name, err)
+	}
+
 	for _, outputSpec := range job.Outputs {
 		if strings.HasPrefix(outputSpec.Path, "zos-temp://") && !outputSpec.Keep {
-			physicalDSN, err := paths.ResolvePath(ctx, job, outputSpec.Path)
+			physicalDSN, err := paths.ResolvePath(ctx, job, outputSpec.Path, nil)
 			if err != nil {
 				logger.Error().Err(err).Str("virtual_path", outputSpec.Path).Msg("Failed to resolve temporary output path for pre-deletion.")
 				// This could be an error preventing the job from running, as the output DSN is unknown
@@ -148,6 +153,9 @@ func (h *ZosCompileHandler) Execute(ctx *context.ExecutionContext, job *types.Jo
 }
 
 func (h *ZosCompileHandler) Cleanup(ctx *context.ExecutionContext, job *types.Job, execRecord *models.JobExecutionRecord, logger zerolog.Logger) error {
-	logger.Debug().Msg("Cleanup step for ZosCompileHandler (no-op)")
+	logger.Debug().Msg("Cleanup step for ZosCompileHandler")
+	if err := cleanupZosJobOutputs(ctx, job, execRecord, logger); err != nil {
+		logger.Error().Err(err).Msg("Error during ZosCompileHandler output cleanup.")
+	}
 	return nil
 }

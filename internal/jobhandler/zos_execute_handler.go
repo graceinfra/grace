@@ -47,9 +47,13 @@ func (h *ZosExecuteHandler) Validate(job *types.Job, cfg *types.GraceConfig) []s
 func (h *ZosExecuteHandler) Prepare(ctx *context.ExecutionContext, job *types.Job, logger zerolog.Logger) error {
 	logger.Debug().Msg("Prepare step for ZosExecuteHandler")
 
+	if err := prepareZosJobInputs(ctx, job, logger); err != nil {
+		return fmt.Errorf("failed to prepare inputs for execute job %s: %w", job.Name, err)
+	}
+
 	for _, outputSpec := range job.Outputs {
 		if strings.HasPrefix(outputSpec.Path, "zos-temp://") && !outputSpec.Keep {
-			physicalDSN, err := paths.ResolvePath(ctx, job, outputSpec.Path)
+			physicalDSN, err := paths.ResolvePath(ctx, job, outputSpec.Path, nil)
 			if err != nil {
 				logger.Error().Err(err).Str("virtual_path", outputSpec.Path).Msg("Failed to resolve temporary output path for pre-deletion.")
 				return fmt.Errorf("failed to resolve temporary output path %s for pre-deletion: %w", outputSpec.Path, err)
@@ -148,5 +152,8 @@ func (h *ZosExecuteHandler) Execute(ctx *context.ExecutionContext, job *types.Jo
 
 func (h *ZosExecuteHandler) Cleanup(ctx *context.ExecutionContext, job *types.Job, execRecord *models.JobExecutionRecord, logger zerolog.Logger) error {
 	logger.Debug().Msg("Cleanup step for ZosExecuteHandler (no-op)")
+	if err := cleanupZosJobOutputs(ctx, job, execRecord, logger); err != nil {
+		logger.Error().Err(err).Msg("Error during ZosExecuteHandler output cleanup.")
+	}
 	return nil
 }

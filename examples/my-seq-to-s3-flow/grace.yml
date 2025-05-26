@@ -1,0 +1,29 @@
+config:
+  profile: zosmf
+
+datasets:
+  jcl: IBMUSER.MYSEQTOS.JCL
+  src: IBMUSER.MYSEQTOS.SRC
+  loadlib: IBMUSER.LOAD
+
+jobs:
+  - name: SEQTOS3
+    type: shell
+    shell: bash
+    inputs:
+      - name: INFILE
+        path: "zos://IBMUSER.SAMPLE.TEXTFILE"
+        encoding: text
+    with:
+      inline: |
+        S3_BUCKET="grace-demo-bucket-1234"
+        S3_KEY="migrated_data/seq_extract_$(date +%Y%m%d_%H%M%S).txt"
+ 
+        aws s3 cp "$GRACE_INPUT_INFILE" "s3://$S3_BUCKET/$S3_KEY" --metadata Content-Type=text/plain
+ 
+        if [ $? -eq 0 ]; then
+          echo "Successfully uploaded to S3: s3://$S3_BUCKET/$S3_KEY"
+        else
+          exit 1 # Crucial: exit with non-zero to mark the Grace job as FAILED
+        fi
+

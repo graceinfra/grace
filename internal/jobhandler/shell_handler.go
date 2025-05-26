@@ -127,7 +127,7 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 		ddName := strings.ToUpper(inputSpec.Name)
 		encoding := inputSpec.Encoding
 
-		physicalPath, err := paths.ResolvePath(ctx, job, inputSpec.Path)
+		physicalPath, err := paths.ResolvePath(ctx, job, inputSpec.Path, nil)
 		if err != nil {
 			logger.Error().Err(err).Str("virtual_path", inputSpec.Path).Msg("Failed to resolve input path for shell job.")
 			record.FinishTime = time.Now().Format(time.RFC3339)
@@ -190,7 +190,7 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 		var localPathForEnv string
 
 		// Resolve the path first to know its absolute/final form
-		resolvedPath, err := paths.ResolvePath(ctx, job, virtualPath)
+		resolvedPath, err := paths.ResolvePath(ctx, job, virtualPath, nil)
 		if err != nil {
 			logger.Error().Err(err).Str("virtual_path", virtualPath).Msg("Failed to resolve output path for setting env var.")
 
@@ -277,7 +277,7 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 	} else {
 		// job.ShellWith.Script is used
 		var err error
-		scriptPath, err = paths.ResolvePath(ctx, job, job.ShellWith.Script) // Resolve if it's src://path/to/script.sh
+		scriptPath, err = paths.ResolvePath(ctx, job, job.ShellWith.Script, nil) // Resolve if it's src://path/to/script.sh
 		if err != nil {
 			logger.Error().Err(err).Str("script_path", job.ShellWith.Script).Msg("Failed to resolve script path.")
 			record.FinishTime = time.Now().Format(time.RFC3339)
@@ -411,7 +411,7 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 			// For zos:// and zos-temp://, upload the file
 			if strings.HasPrefix(virtualPath, "zos://") || strings.HasPrefix(virtualPath, "zos-temp://") {
 				// Resolve the target physical path on z/OS
-				physicalPathToUpload, resolveErr := paths.ResolvePath(ctx, job, virtualPath)
+				physicalPathToUpload, resolveErr := paths.ResolvePath(ctx, job, virtualPath, nil)
 				if resolveErr != nil {
 					logger.Error().Err(resolveErr).Str("virtual_path", virtualPath).Msgf("Failed to resolve output path for upload. Job will be marked as failed.")
 					record.SubmitResponse.Success = false
@@ -422,7 +422,12 @@ func (h *ShellHandler) Execute(ctx *context.ExecutionContext, job *types.Job, lo
 				}
 
 				logger.Info().Str("local_path", localStagePath).Str("dsn", physicalPathToUpload).Msgf("Uploading output %s for shell job", ddName)
-				_, uploadErr := zowe.UploadFileToDataset(ctx, localStagePath, physicalPathToUpload)
+
+				effectiveEncoding := outputSpec.Encoding
+				if effectiveEncoding == "" {
+					effectiveEncoding = "binary"
+				}
+				_, uploadErr := zowe.UploadFileToDataset(ctx, localStagePath, physicalPathToUpload, effectiveEncoding)
 				if uploadErr != nil {
 					logger.Error().Err(uploadErr).Str("local_path", localStagePath).Str("dsn", physicalPathToUpload).Msgf("Failed to upload output %s. Job will be marked as failed.", ddName)
 					record.SubmitResponse.Success = false

@@ -196,7 +196,7 @@ func WaitForJobCompletion(ctx *context.ExecutionContext, jobId, jobName string) 
 
 // UploadJCL uploads the pre-generated JCL file for a job.
 // Spinner should be managed by the caller (e.g., cmd/deck.go).
-func UploadJCL(ctx *context.ExecutionContext, job *types.Job) (*uploadRes, error) { // Changed to return uploadRes
+func UploadJCL(ctx *context.ExecutionContext, job *types.Job) (*UploadRes, error) { // Changed to return uploadRes
 	jclFileName := job.Name + ".jcl"
 	jclPath := filepath.Join(".grace", "deck", jclFileName)
 	_, err := os.Stat(jclPath)
@@ -206,7 +206,7 @@ func UploadJCL(ctx *context.ExecutionContext, job *types.Job) (*uploadRes, error
 
 	target := fmt.Sprintf("%s(%s)", ctx.Config.Datasets.JCL, strings.ToUpper(job.Name))
 
-	res, err := UploadFileToDataset(ctx, jclPath, target)
+	res, err := UploadFileToDataset(ctx, jclPath, target, "text")
 	if err != nil {
 		// Error could be from runZowe process error or Zowe logical error from UploadFileToDataset
 		return res, fmt.Errorf("failed to upload JCL %s to %s: %w", jclPath, target, err)

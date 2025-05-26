@@ -70,7 +70,12 @@ func PrepareJCLTemplateData(ctx *context.ExecutionContext, job *types.Job) (*JCL
 
 	// Process inputs
 	for _, inputSpec := range job.Inputs {
-		resolvedDsn, err := paths.ResolvePath(ctx, job, inputSpec.Path)
+		var fileSpecForZosInput *types.FileSpec = nil
+		isZosJobTypeForInput := job.Type == "compile" || job.Type == "linkedit" || job.Type == "execute"
+		if isZosJobTypeForInput && (strings.HasPrefix(inputSpec.Path, "file://") || strings.HasPrefix(inputSpec.Path, "local-temp://")) {
+			fileSpecForZosInput = &inputSpec
+		}
+		resolvedDsn, err := paths.ResolvePath(ctx, job, inputSpec.Path, fileSpecForZosInput)
 		if err != nil {
 			return nil, fmt.Errorf("job %s: failed to resolve input path %s for DD %s during template data preparation: %w", job.Name, inputSpec.Path, inputSpec.Name, err)
 		}
@@ -82,14 +87,14 @@ func PrepareJCLTemplateData(ctx *context.ExecutionContext, job *types.Job) (*JCL
 
 		templateInputs = append(templateInputs, ResolvedDD{
 			Name: strings.ToUpper(inputSpec.Name),
-			DSN: resolvedDsn,
+			DSN:  resolvedDsn,
 			DISP: disp,
 		})
 	}
 
 	// Process outputs
 	for _, outputSpec := range job.Outputs {
-		resolvedDsn, err := paths.ResolvePath(ctx, job, outputSpec.Path)
+		resolvedDsn, err := paths.ResolvePath(ctx, job, outputSpec.Path, nil)
 		if err != nil {
 			// This error indicates a problem with PreresolveOutputPaths or an unexpected output path.
 			return nil, fmt.Errorf("job %s: failed to resolve output path %s for DD %s during template data preparation: %w", job.Name, outputSpec.Path, outputSpec.Name, err)
@@ -110,11 +115,11 @@ func PrepareJCLTemplateData(ctx *context.ExecutionContext, job *types.Job) (*JCL
 		}
 
 		templateOutputs = append(templateOutputs, ResolvedDD{
-			Name: strings.ToUpper(outputSpec.Name),
-			DSN: resolvedDsn,
-			DISP: disp,
-			Space: space,
-			DCB: dcb,
+			Name:     strings.ToUpper(outputSpec.Name),
+			DSN:      resolvedDsn,
+			DISP:     disp,
+			Space:    space,
+			DCB:      dcb,
 			IsOutput: true,
 		})
 	}
@@ -150,17 +155,17 @@ func RenderJCL(templateNameForErrorMsg string, templateContent string, data *JCL
 	tpl = tpl.Funcs(template.FuncMap{
 		"ToUpper": strings.ToUpper,
 		"Default": func(defVal interface{}, givenVal ...interface{}) interface{} {
-		    if len(givenVal) > 0 && givenVal[0] != nil {
-		        // Check if it's an empty string, if so, still use default
-		        s, ok := givenVal[0].(string)
-		        if ok && s != "" {
-		            return givenVal[0]
-		        }
-		        if !ok { // If not a string, and not nil, consider it "given"
-		            return givenVal[0]
-		        }
-		    }
-		    return defVal
+			if len(givenVal) > 0 && givenVal[0] != nil {
+				// Check if it's an empty string, if so, still use default
+				s, ok := givenVal[0].(string)
+				if ok && s != "" {
+					return givenVal[0]
+				}
+				if !ok { // If not a string, and not nil, consider it "given"
+					return givenVal[0]
+				}
+			}
+			return defVal
 		},
 	})
 
