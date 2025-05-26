@@ -49,11 +49,11 @@ type FileSpec struct {
 	Name string `yaml:"name"`
 	Path string `yaml:"path"`
 
-	Space  string `yaml:"space,omitempty"`
-	DCB    string `yaml:"dcb,omitempty"`
-	DsType string `yaml:"ds_type,omitempty"`
-	Disp string `yaml:"disp,omitempty"`
-	Keep   bool   `yaml:"keep,omitempty"`
+	Space    string `yaml:"space,omitempty"`
+	DCB      string `yaml:"dcb,omitempty"`
+	DsType   string `yaml:"ds_type,omitempty"`
+	Disp     string `yaml:"disp,omitempty"`
+	Keep     bool   `yaml:"keep,omitempty"`
 	Encoding string `yaml:"encoding,omitempty"`
 }
 
@@ -103,7 +103,7 @@ type ZoweRfjError struct {
 	Host        string           `json:"host"`
 	BasePath    string           `json:"basePath"`
 	HTTPStatus  int              `json:"httpStatus"`
-	Payload     map[string]any   `json:"payload"`
+	Payload     string           `json:"payload"`
 	Headers     []map[string]any `json:"headers"`
 	Resource    string           `json:"resource"`
 	Request     string           `json:"request"`
